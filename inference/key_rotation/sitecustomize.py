@@ -13,7 +13,10 @@ if os.environ.get('QUEST_KEY_ROTATION') == '1' and os.environ.get('QUEST_KEY_ROT
     import http.client
     import requests
 
-    root = Path(__file__).resolve().parents[3] / 'strict-reproduction'
+    repo = Path(__file__).resolve().parents[2]
+    workspace = repo / 'workspace'
+    project = Path(os.environ.get('QUEST_PROJECT_ROOT', str(workspace if (workspace / 'strict-reproduction').is_dir() else repo.parent)))
+    root = project / 'strict-reproduction'
     secret = Path(os.environ.get('QUEST_KEY_POOL_DIR', str(root / '.secrets')))
     pool_file = Path(os.environ.get('QUEST_KEY_POOL_FILE', str(secret / 'api_key_pool_20261028.json')))
     state_file = Path(os.environ.get('QUEST_KEY_STATE_FILE', str(secret / 'key_rotation_state_20261028.json')))

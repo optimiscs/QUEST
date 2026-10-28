@@ -7,7 +7,9 @@ from tqdm import tqdm
 import threading
 from datetime import datetime
 # Enable the server-local credential pool without changing tool prompts or dataset code.
-_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_repo_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+_workspace = os.path.join(_repo_root, "workspace")
+_project_root = os.environ.get("QUEST_PROJECT_ROOT", _workspace if os.path.isdir(os.path.join(_workspace, "strict-reproduction")) else os.path.dirname(_repo_root))
 _rotation_pool = os.environ.get("QUEST_KEY_POOL_DIR", os.path.join(_project_root, "strict-reproduction", ".secrets"))
 _rotation_file = os.environ.get("QUEST_KEY_POOL_FILE", os.path.join(_rotation_pool, "api_key_pool_20261028.json"))
 if os.environ.get("QUEST_KEY_ROTATION", "1") == "1" and os.path.isfile(_rotation_file):

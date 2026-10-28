@@ -14,7 +14,9 @@ import subprocess
 import sys
 import time
 
-ROOT = Path(os.environ.get('QUEST_PROJECT_ROOT', str(Path(__file__).resolve().parents[3])))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE = REPO_ROOT / 'workspace'
+ROOT = Path(os.environ.get('QUEST_PROJECT_ROOT', str(WORKSPACE if (WORKSPACE / 'strict-reproduction').is_dir() else REPO_ROOT.parent)))
 HOME_DIR = ROOT / 'strict-reproduction/official-dataset-eval-20261028'
 SOURCES = HOME_DIR / 'sources'
 PINS = {'browsecomp': ('simple-evals', '652c89d0ca9df547706735883097e9537d40dc47'),

@@ -3,7 +3,9 @@
 import argparse, contextlib, hashlib, importlib.util, json, subprocess, sys
 from pathlib import Path
 import os
-ROOT = Path(os.environ.get('QUEST_PROJECT_ROOT', str(Path(__file__).resolve().parents[3])))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE = REPO_ROOT / 'workspace'
+ROOT = Path(os.environ.get('QUEST_PROJECT_ROOT', str(WORKSPACE if (WORKSPACE / 'strict-reproduction').is_dir() else REPO_ROOT.parent)))
 SOURCE = ROOT/'strict-reproduction/official-sources/gaia-leaderboard'
 PIN = '9f133d71362e77b3539f1514f31b9c101a545fec'
 
