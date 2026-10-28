@@ -57,7 +57,7 @@ def _init_faiss():
         p_reps_0, p_lookup_0 = pickle_load(index_files[0])
         retriever = FaissFlatSearcher(p_reps_0)
 
-        lookup = list(p_lookup_0)
+        lookup = []
         shards = chain([(p_reps_0, p_lookup_0)], map(pickle_load, index_files[1:]))
         if len(index_files) > 1:
             shards = tqdm(shards, desc="Loading FAISS shards", total=len(index_files))

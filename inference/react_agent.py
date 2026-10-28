@@ -33,6 +33,18 @@ from tool_search import *
 from tool_visit import *
 from tool_memory import *
 
+def extract_non_thinking_answer(content: str) -> Optional[str]:
+    """Extract the final answer from output outside the model's thinking block."""
+    visible = content.rsplit("</think>", 1)[-1]
+    # An unfinished thinking block is not final output.
+    visible = visible.split("<think>", 1)[0]
+    matches = list(re.finditer(r"<answer>((?:(?!<answer>|</answer>)[\s\S])*?)</answer>", visible))
+    if not matches:
+        return None
+    answer = matches[-1].group(1).strip()
+    return answer or None
+
+
 OBS_START = '<tool_response>'
 OBS_END = '\n</tool_response>'
 
@@ -151,7 +163,7 @@ def build_system_prompt(enable_python_tool: bool) -> str:
     if SCHOLAR_TOOL_ENABLED:
         prompt = prompt.replace("</tools>", f"{SCHOLAR_TOOL_PROMPT}</tools>")
     if enable_python_tool:
-        prompt = prompt.replace("</tools>", f"{PYTHON_TOOL_PROMPT}</tools>")
+        prompt = prompt.replace("\n</tools>", f"\n{PYTHON_TOOL_PROMPT}</tools>", 1)
     visit_disabled = os.environ.get("DISABLE_VISIT_TOOL", "").lower() in ("1", "true", "yes")
     if visit_disabled:
         prompt = re.sub(r'\{"type": "function", "function": \{"name": "visit".*?\}\}\n?', '', prompt)
@@ -1376,7 +1388,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 tl.full_messages.append(copy.deepcopy(final_assistant_msg))  # Sync to the full message history
 
                 if '<answer>' in content and '</answer>' in content:
-                    prediction = messages[-1]['content'].split('<answer>')[1].split('</answer>')[0]
+                    prediction = extract_non_thinking_answer(messages[-1]['content']) or 'answer not found.'
                     termination = 'generate an answer as llm call limit reached'
                 else:
                     prediction = 'answer not found.'
@@ -1419,7 +1431,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 messages.append(final_assistant_msg)
                 tl.full_messages.append(copy.deepcopy(final_assistant_msg))  # Sync to the full message history
                 if '<answer>' in content and '</answer>' in content:
-                    prediction = messages[-1]['content'].split('<answer>')[1].split('</answer>')[0]
+                    prediction = extract_non_thinking_answer(messages[-1]['content']) or 'answer not found.'
                     termination = 'generate an answer as token limit reached'
                 else:
                     prediction = 'answer not found.'
@@ -1451,7 +1463,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 return attach_resume_metadata(result)
 
         if '<answer>' in messages[-1]['content']:
-            prediction = messages[-1]['content'].split('<answer>')[1].split('</answer>')[0]
+            prediction = extract_non_thinking_answer(messages[-1]['content']) or 'answer not found.'
             termination = 'answer'
         else:
             prediction = 'No answer found.'
