@@ -14,7 +14,7 @@ class FakeResponse:
 
 with tempfile.TemporaryDirectory() as directory:
     p = Path(directory)
-    (p/'api_key_pool_20261028.json').write_text(json.dumps({'jina':['SECRET_J1','SECRET_J2'],'serper':['SECRET_S1','SECRET_S2']}))
+    (p/'api_key_pool.json').write_text(json.dumps({'jina':['SECRET_J1','SECRET_J2'],'serper':['SECRET_S1','SECRET_S2']}))
     os.environ.update(QUEST_KEY_ROTATION='1', QUEST_KEY_POOL_DIR=directory, QUEST_KEY_AUDIT_DIR=directory)
     os.environ.pop('QUEST_KEY_ROTATION_ACTIVE_PID', None)
     calls = []
@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory() as directory:
     conn.request('POST', '/search', '{}', {})
     result = conn.getresponse()
     assert result.status == 200 and sent == ['SECRET_S1', 'SECRET_S2']
-    assert json.loads((p/'key_rotation_state_20261028.json').read_text())['jina']['exhausted'] == [0]
+    assert json.loads((p/'key_rotation_state.json').read_text())['jina']['exhausted'] == [0]
     logs = (p/'events.jsonl').read_text()
     assert 'SECRET_' not in logs
     assert not module.switchable(429, 'requests per minute exceeded')

@@ -8,9 +8,3 @@ inference/cache/
 
 # Local runtime artifacts and compatibility links (never commit data or credentials).
 /workspace/
-/quest4b-gaia-20261027
-/quest10pct-5090-transfer-20261028-r1
-/trace-viewer
-/trace-viewer-zh
-/trace-viewer-runtime
-/._trace-viewer*

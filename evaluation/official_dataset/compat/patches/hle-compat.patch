@@ -1,0 +1,26 @@
+diff --git a/hle_eval/run_judge_results.py b/hle_eval/run_judge_results.py
+index 4caca7c..6e1a62f 100644
+--- a/hle_eval/run_judge_results.py
++++ b/hle_eval/run_judge_results.py
+@@ -43,15 +43,16 @@ class ExtractedAnswer(BaseModel):
+ async def extract_answer(question, correct_answer, response):
+     prompt = JUDGE_PROMPT.format(question=question, correct_answer=correct_answer, response=response)
+     try:
+-        response = await client.beta.chat.completions.parse(
++        response = await client.chat.completions.create(
+                 model=args.judge,
+-                max_completion_tokens=4096, # overkill for judge
++                max_completion_tokens=4096,
+                 messages=[
++                    {"role": "system", "content": "Return a JSON object with fields extracted_final_answer (string), reasoning (string), correct (yes or no), confidence (integer) and strict (true)."},
+                     {"role": "user", "content": prompt}
+                 ],
+-                response_format=ExtractedAnswer, 
+-            ) 
+-        content = response.choices[0].message.parsed
++                response_format={"type": "json_object"},
++            )
++        content = ExtractedAnswer.model_validate_json(response.choices[0].message.content)
+         return { 
+             "correct_answer": correct_answer,
+             "model_answer": content.extracted_final_answer,

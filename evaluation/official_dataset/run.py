@@ -23,6 +23,11 @@ PINS = {'browsecomp': ('simple-evals', '652c89d0ca9df547706735883097e9537d40dc47
         'hle': ('hle', '22ed3074b1e7b134bcbc09028d0ba320839b0655'),
         'drbench': ('deep-research-bench', 'f2735b5c3636759c22f9e936c0232de8bf545b67')}
 
+def key_rotation_dir():
+    """Locate the adapter from the source checkout, not the runtime workspace."""
+    return REPO_ROOT / "inference/key_rotation"
+
+
 def sha(path):
     h = hashlib.sha256()
     with path.open('rb') as f:
@@ -96,7 +101,7 @@ def main():
                 'source_modified': False, 'raw_sha256': sha(raw), 'query_sha256': sha(query),
                 'sample_ids': [str(x['id']) for x in records], 'status': 'running', 'stages': ['RACE', 'FACT']}
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-    key_rotation = ROOT / 'QUEST/inference/key_rotation'
+    key_rotation = key_rotation_dir()
     if not (key_rotation/'sitecustomize.py').is_file(): raise RuntimeError('Key rotation adapter is missing')
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONPATH=os.pathsep.join((str(key_rotation), str(source))), QUEST_KEY_ROTATION='1',
                LLM_BACKEND='openai', OPENAI_API_KEY=config['API_KEY'], OPENAI_BASE_URL=config['API_BASE'],

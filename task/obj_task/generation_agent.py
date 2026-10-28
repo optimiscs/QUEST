@@ -1,4 +1,10 @@
 import json
+import sys as _quest_sys
+from pathlib import Path as _QuestPath
+_quest_repo = str(_QuestPath(__file__).resolve().parents[2])
+if _quest_repo not in _quest_sys.path:
+    _quest_sys.path.append(_quest_repo)
+from contrib.deepseek_data.dsml import normalize_dsml
 import json5
 import os
 import re
@@ -234,18 +240,9 @@ class MultiTurnReactAgent(FnCallAgent):
                     content = ""
                 
                 print(content)
-                # Preserve raw output above; translate DeepSeek textual DSML tool calls.
-                if ("<tool_call>" not in content or "</tool_call>" not in content) and "DSML" in content and os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":
-                    calls = []
-                    for name, body in re.findall(r'<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke\s+name="([^"]+)"[^>]*>(.*?)(?=<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke|$)', content, re.S):
-                        args = {}
-                        for key, raw in re.findall(r'parameter\s+name="([^"]+)"[^>]*>(.*?)(?=</[｜|]{1,2}DSML)', body, re.S):
-                            try: args[key] = json.loads(raw.strip())
-                            except (ValueError, TypeError): args[key] = raw.strip()
-                        if args: calls.append("<tool_call>\n" + json.dumps({"name": name, "arguments": args}, ensure_ascii=False) + "\n</tool_call>")
-                    if calls:
-                        content = "\n".join(calls)
-                        print("[DeepSeek adapter] normalized DSML tool calls:", len(calls))
+                # Preserve non-tool text while normalizing complete DSML calls.
+                if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":
+                    content = normalize_dsml(content)
                 stop_sequences = ["\n<tool_response>", "<tool_response>"]
                 for stop_seq in stop_sequences:
                     if content and stop_seq in content:

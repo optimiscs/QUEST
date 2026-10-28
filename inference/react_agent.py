@@ -1,4 +1,10 @@
 import json
+import sys as _quest_sys
+from pathlib import Path as _QuestPath
+_quest_repo = str(_QuestPath(__file__).resolve().parents[1])
+if _quest_repo not in _quest_sys.path:
+    _quest_sys.path.append(_quest_repo)
+from contrib.deepseek_data.dsml import normalize_dsml
 import json5
 import os
 import sys
@@ -973,15 +979,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             message = response.choices[0].message
             content = message.content or ""
             print("[DeepSeek raw content]", content)
-            if ("<tool_call>" not in content or "</tool_call>" not in content) and "DSML" in content:
-                calls = []
-                for name, body in re.findall(r'<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke\s+name="([^"]+)"[^>]*>(.*?)(?=<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke|$)', content, re.S):
-                    args = {}
-                    for key, raw in re.findall(r'parameter\s+name="([^"]+)"[^>]*>(.*?)(?=</[｜|]{1,2}DSML)', body, re.S):
-                        try: args[key] = json.loads(raw.strip())
-                        except (ValueError, TypeError): args[key] = raw.strip()
-                    if args: calls.append("<tool_call>\n" + json.dumps({"name": name, "arguments": args}, ensure_ascii=False) + "\n</tool_call>")
-                if calls: content = "\n".join(calls)
+            content = normalize_dsml(content)
             reasoning = getattr(message, "reasoning_content", None)
             if reasoning:
                 content = "<think>\n" + reasoning + "\n</think>\n" + content

@@ -1,0 +1,104 @@
+diff --git a/mind2web2/eval_runner.py b/mind2web2/eval_runner.py
+index f4077da..fe548e7 100644
+--- a/mind2web2/eval_runner.py
++++ b/mind2web2/eval_runner.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import asyncio
++import os
+ import json
+ import logging
+ import re
+@@ -141,7 +142,7 @@ async def _eval_one_answer(
+             cache=cache,
+             semaphore=dual_semaphore,
+             logger=logger,
+-            model="o4-mini",
++            model=os.environ.get("MIND2WEB_JUDGE_MODEL", "o4-mini"),
+         )
+ 
+         logger.info(
+diff --git a/mind2web2/llm_client/openai_client.py b/mind2web2/llm_client/openai_client.py
+index d0fe1e2..32c9b9d 100644
+--- a/mind2web2/llm_client/openai_client.py
++++ b/mind2web2/llm_client/openai_client.py
+@@ -7,6 +7,7 @@ and asynchronous interfaces, and optional token usage stats.
+ """
+ 
+ import os
++import json
+ import backoff
+ from openai import OpenAI, AsyncOpenAI
+ from openai import (
+@@ -79,6 +80,35 @@ def _log_giveup(details):
+ # --------------------------------------------------------------------------- #
+ 
+ 
++def _split_long_images(messages):
++    # DeepSeek rejects very tall JPEGs; preserve all pixels as ordered segments.
++    import base64, io
++    from PIL import Image
++    result = []
++    for message in messages:
++        message = dict(message)
++        content = message.get("content")
++        if isinstance(content, list):
++            parts = []
++            for part in content:
++                url = part.get("image_url", {}).get("url", "") if isinstance(part, dict) else ""
++                if url.startswith("data:image/jpeg;base64,"):
++                    image = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
++                    if image.height > 2048:
++                        for y in range(0, image.height, 2048):
++                            segment = image.crop((0, y, image.width, min(y + 2048, image.height)))
++                            buf = io.BytesIO()
++                            segment.save(buf, format="JPEG", quality=95)
++                            img = dict(part["image_url"])
++                            img["url"] = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
++                            parts.append({**part, "image_url": img})
++                        continue
++                parts.append(part)
++            message["content"] = parts
++        result.append(message)
++    return result
++
++
+ @backoff.on_exception(
+     backoff.expo,
+     (OpenAIError, APIConnectionError, RateLimitError, InternalServerError, APITimeoutError),
+@@ -92,8 +122,17 @@ def completion_with_backoff(client: OpenAI, **kwargs):
+     If `response_format` is supplied the call is routed to the
+     structured-output beta endpoint; otherwise the regular endpoint is used.
+     """
++    kwargs["messages"] = _split_long_images(kwargs["messages"])
++    if "response_format" in kwargs and isinstance(kwargs["response_format"], type):
++        schema = kwargs["response_format"]
++        adapted = dict(kwargs)
++        adapted["response_format"] = {"type": "json_object"}
++        adapted["messages"] = [{"role": "system", "content": "Return a JSON object matching this schema: " + json.dumps(schema.model_json_schema(), ensure_ascii=False)}] + list(kwargs["messages"])
++        result = client.chat.completions.create(**adapted)
++        object.__setattr__(result.choices[0].message, "parsed", schema.model_validate_json(result.choices[0].message.content))
++        return result
+     if "response_format" in kwargs:
+-        return client.beta.chat.completions.parse(**kwargs)  # structured JSON
++        return client.beta.chat.completions.parse(**kwargs)
+     return client.chat.completions.create(**kwargs)
+ 
+ 
+@@ -107,6 +146,15 @@ async def acompletion_with_backoff(client: AsyncOpenAI, **kwargs):
+     """
+     Asynchronous completion request with exponential-backoff retry.
+     """
++    kwargs["messages"] = _split_long_images(kwargs["messages"])
++    if "response_format" in kwargs and isinstance(kwargs["response_format"], type):
++        schema = kwargs["response_format"]
++        adapted = dict(kwargs)
++        adapted["response_format"] = {"type": "json_object"}
++        adapted["messages"] = [{"role": "system", "content": "Return a JSON object matching this schema: " + json.dumps(schema.model_json_schema(), ensure_ascii=False)}] + list(kwargs["messages"])
++        result = await client.chat.completions.create(**adapted)
++        object.__setattr__(result.choices[0].message, "parsed", schema.model_validate_json(result.choices[0].message.content))
++        return result
+     if "response_format" in kwargs:
+         return await client.beta.chat.completions.parse(**kwargs)
+     return await client.chat.completions.create(**kwargs)

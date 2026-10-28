@@ -9,10 +9,10 @@ The upstream repositories live outside QUEST in `strict-reproduction/official-da
 Invoke the DeepResearch Bench path with the project environment:
 
 ```
-env/bin/python QUEST/evaluation/official_dataset/run.py drbench \
+workspace/env/bin/python evaluation/official_dataset/run.py drbench \
   --raw /absolute/path/to/quest-converted.jsonl \
   --query /absolute/path/to/matching-official-queries.jsonl \
-  --out /root/autodl-tmp/Quest/quest4b-gaia-20261027/strict-reproduction/official-dataset-eval-20261028/runs/NEW_RUN \
+  --out /root/autodl-tmp/Quest/workspace/strict-reproduction/official-dataset-eval-20261028/runs/NEW_RUN \
   --workers 1
 ```
 
@@ -23,3 +23,5 @@ The raw rows must contain `id`, `prompt`, and `article`; query rows must be byte
 * Optional GAIA generation formatting: `run_gaia_prompt.py --gaia-format -- <run_multi_react.py arguments>` adds the GAIA concise-answer instruction before QUEST's date marker, retaining `<answer>` tags. The wrapper creates a temporary prompt variable and uses QUEST's existing `SYSTEM_PROMPT_NAME` selection; it does not modify upstream inference source. Omit `--gaia-format` to run with the existing prompt. `--check` checks wiring without inference. This is GAIA-adapted QUEST prompting, not the exact official GAIA system prompt, and changes comparability with earlier runs. Use the same setting for both models. It applies only to new processes started through this wrapper; resumed saved messages or other wrappers that clear `SYSTEM_PROMPT_NAME` will not acquire it. Use separate run directories and record prompt hashes.
 
 > The BrowseComp and HLE notes above describe this launcher and its original unmodified-source configuration. Later smoke experiments used separately stored, explicitly patched upstream copies and must not be interpreted as results from this launcher or as aggregate benchmark scores. No historical outputs are modified by this integration.
+
+For the later explicitly adapted benchmark copies, see [compat/README.md](compat/README.md). Those copies differ from the unmodified-source launcher described above.

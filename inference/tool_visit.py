@@ -7,13 +7,13 @@ from typing import List, Union, Tuple, Optional, Dict
 import requests
 from qwen_agent.tools.base import BaseTool, register_tool
 from prompt import (
-    EXTRACTOR_PROMPT,
     build_visit_extractor_messages,
     choose_local_openai_base_url,
     get_local_served_model_name,
     use_visit_local_prompt,
 )
 from openai import OpenAI, AzureOpenAI
+from summary_utils import parse_summary_with_retry, visit_max_content_tokens
 import random
 from urllib.parse import urlparse, unquote
 import time 
@@ -544,10 +544,10 @@ class Visit(BaseTool):
         original_content = content
         
         if content and not content.startswith("[visit] Failed to read page after all retries.") and content != "[visit] Empty content." and not content.startswith("[document_parser]") and not content.startswith("[visit] Error"):
-            content = truncate_to_tokens(content, max_tokens=95000)
-            messages = [{"role":"user","content": EXTRACTOR_PROMPT.format(webpage_content=content, goal=goal)}]
+            content = truncate_to_tokens(content, max_tokens=visit_max_content_tokens())
+            messages = build_visit_extractor_messages(content, goal)
             parse_retry_times = 0
-            raw = summary_page_func(messages, max_retries=max_retries)
+            raw = summary_page_func(messages, max_retries=max_retries) or ""
             summary_retries = 3
             while len(raw) < 10 and summary_retries >= 0:
                 truncate_length = int(0.7 * len(content)) if summary_retries > 0 else 25000
@@ -562,24 +562,14 @@ class Visit(BaseTool):
                 )
                 print(status_msg)
                 content = content[:truncate_length]
-                extraction_prompt = EXTRACTOR_PROMPT.format(
-                    webpage_content=content,
-                    goal=goal
-                )
-                messages = [{"role": "user", "content": extraction_prompt}]
-                raw = summary_page_func(messages, max_retries=max_retries)
+                messages = build_visit_extractor_messages(content, goal)
+                raw = summary_page_func(messages, max_retries=max_retries) or ""
                 summary_retries -= 1
 
-            parse_retry_times = 2
-            if isinstance(raw, str):
-                raw = raw.replace("```json", "").replace("```", "").strip()
-            while parse_retry_times < 3:
-                try:
-                    raw = json.loads(raw)
-                    break
-                except:
-                    raw = summary_page_func(messages, max_retries=max_retries)
-                    parse_retry_times += 1
+            raw, summary_parsed = parse_summary_with_retry(
+                raw, summary_page_func, messages, max_retries=max_retries
+            )
+            parse_retry_times = 0 if summary_parsed else 3
             
             if parse_retry_times >= 3:
                 useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(url=url, goal=goal)
@@ -699,7 +689,7 @@ class Visit(BaseTool):
         
     def call_server(self, msgs, max_retries=2):
         if use_visit_local_prompt():
-            model_name = get_local_served_model_name()
+            model_name = get_local_served_model_name(role="visit")
             last_error = None
             for attempt in range(max_retries):
                 try:
@@ -878,10 +868,10 @@ class Visit(BaseTool):
             return useful_information
 
         if content and not content.startswith("[visit] Failed") and content != "[visit] Empty content." and not content.startswith("[document_parser]"):
-            content = truncate_to_tokens(content, max_tokens=95000)
+            content = truncate_to_tokens(content, max_tokens=visit_max_content_tokens())
             messages = build_visit_extractor_messages(content, goal)
             parse_retry_times = 0
-            raw = summary_page_func(messages, max_retries=max_retries)
+            raw = summary_page_func(messages, max_retries=max_retries) or ""
             summary_retries = 3
             while len(raw) < 10 and summary_retries >= 0:
                 truncate_length = int(0.7 * len(content)) if summary_retries > 0 else 25000
@@ -897,19 +887,13 @@ class Visit(BaseTool):
                 print(status_msg)
                 content = content[:truncate_length]
                 messages = build_visit_extractor_messages(content, goal)
-                raw = summary_page_func(messages, max_retries=max_retries)
+                raw = summary_page_func(messages, max_retries=max_retries) or ""
                 summary_retries -= 1
 
-            parse_retry_times = 2
-            if isinstance(raw, str):
-                raw = raw.replace("```json", "").replace("```", "").strip()
-            while parse_retry_times < 3:
-                try:
-                    raw = json.loads(raw)
-                    break
-                except:
-                    raw = summary_page_func(messages, max_retries=max_retries)
-                    parse_retry_times += 1
+            raw, summary_parsed = parse_summary_with_retry(
+                raw, summary_page_func, messages, max_retries=max_retries
+            )
+            parse_retry_times = 0 if summary_parsed else 3
             
             if parse_retry_times >= 3:
                 useful_information = "The useful information in {url} for user goal {goal} as follows: \n\n".format(url=url, goal=goal)

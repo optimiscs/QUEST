@@ -260,12 +260,11 @@ def choose_local_openai_base_url() -> str:
     return f"http://{host}:{port}/v1"
 
 
-def get_local_served_model_name(default: str = "deepresearch") -> str:
-    return (
-        os.getenv("LOCAL_PROMPT_MODEL_NAME")
-        or os.getenv("MODEL_NAME")
-        or default
-    )
+def get_local_served_model_name(default: str = "deepresearch", *, role: str = "") -> str:
+    """Resolve per-tool local aliases while retaining the shared legacy fallback."""
+    role_keys = {"visit": "VISIT_LOCAL_MODEL_NAME", "memory": "MEMORY_LOCAL_MODEL_NAME"}
+    role_value = os.getenv(role_keys[role]) if role in role_keys else None
+    return role_value or os.getenv("LOCAL_PROMPT_MODEL_NAME") or os.getenv("MODEL_NAME") or default
 
 
 def build_visit_extractor_messages(webpage_content: str, goal: str):
