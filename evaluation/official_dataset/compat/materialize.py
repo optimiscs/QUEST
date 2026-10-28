@@ -116,16 +116,37 @@ def materialize(name, source, output):
     return {'output':str(output),'upstream':name,'revision':revision,'patch_sha256':digest}
 
 
+def verify_against_source(name, source, output):
+    """Rebuild the pinned source and patch and compare files without running them."""
+    result = verify_materialized(name, output)
+    with tempfile.TemporaryDirectory(prefix="quest-compat-verify-") as directory:
+        expected = Path(directory) / "expected"
+        materialize(name, source, expected)
+        actual_files = inventory(output.resolve(strict=True))
+        expected_files = inventory(expected)
+        if actual_files != expected_files:
+            differences = sorted(k for k in actual_files.keys() | expected_files.keys()
+                                 if actual_files.get(k) != expected_files.get(k))
+            raise ValueError("copy differs from independently rebuilt source: " + ", ".join(differences[:20]))
+    result["verification"] = "matched independently rebuilt pinned source and patch"
+    return result
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('benchmark',choices=PINS)
     parser.add_argument('--source',type=Path,help='Clean checkout at pinned upstream commit')
-    parser.add_argument('--verify-only',action='store_true',help='Verify a previously materialized copy without running it')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--verify-only',action='store_true',help='Verify against the saved manifest without running it')
+    modes.add_argument('--verify-against-source',action='store_true',help='Rebuild pinned source and patch temporarily and compare')
     parser.add_argument('--output',type=Path,required=True,help='Fresh output directory')
     args=parser.parse_args()
     if args.verify_only:
         if args.source:parser.error('--source is not used with --verify-only')
         result=verify_materialized(args.benchmark,args.output)
+    elif args.verify_against_source:
+        if not args.source:parser.error('--source is required with --verify-against-source')
+        result=verify_against_source(args.benchmark,args.source,args.output)
     else:
         if not args.source:parser.error('--source is required unless --verify-only is set')
         result=materialize(args.benchmark,args.source,args.output)

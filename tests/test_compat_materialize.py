@@ -15,6 +15,18 @@ class CompatTests(unittest.TestCase):
     self.assertEqual((out/'file.txt').read_text(),'changed\n');self.assertEqual((src/'file.txt').read_text(),'original\n')
     self.assertFalse((out/'.git').exists());self.assertTrue(result['patch_sha256'])
     self.assertEqual(m.verify_materialized('fake',out)['files_verified'],1)
+    self.assertIn('independently',m.verify_against_source('fake',src,out)['verification'])
+    import hashlib, json
+    (out/'file.txt').write_text('forged\n')
+    manifest=out/m.MANIFEST
+    forged=json.loads(manifest.read_text())
+    forged['files']['file.txt']['sha256']=hashlib.sha256((out/'file.txt').read_bytes()).hexdigest()
+    manifest.write_text(json.dumps(forged))
+    self.assertEqual(m.verify_materialized('fake',out)['files_verified'],1)
+    with self.assertRaises(ValueError):m.verify_against_source('fake',src,out)
+    (out/'file.txt').write_text('changed\n')
+    forged['files']['file.txt']['sha256']=hashlib.sha256((out/'file.txt').read_bytes()).hexdigest()
+    manifest.write_text(json.dumps(forged))
     (out/'file.txt').write_text('tampered\n')
     with self.assertRaises(ValueError):m.verify_materialized('fake',out)
     (out/'file.txt').write_text('changed\n')

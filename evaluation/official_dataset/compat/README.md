@@ -28,3 +28,14 @@ workspace/env/bin/python evaluation/official_dataset/compat/materialize.py simpl
 ```
 
 The manifest records source file hashes and symlink targets, and verification rejects changed, missing or extra files. Old manifests lack an inventory and must be recreated for this check. This detects accidental drift relative to the local manifest; it does not authenticate a manifest that was itself replaced. Save the manifest hash separately when independent provenance is needed. Runtime caches or datasets should live outside the verified copy.
+
+For an independent comparison with the pinned checkout and repository patch:
+
+```bash
+workspace/env/bin/python evaluation/official_dataset/compat/materialize.py simple-evals \
+  --verify-against-source \
+  --source workspace/strict-reproduction/official-dataset-eval-20261028/sources/simple-evals \
+  --output workspace/compat/simple-evals-new
+```
+
+This rebuilds a temporary copy and compares its file hashes and symlink targets to the existing copy, detecting even changes accompanied by a rewritten local manifest. It checks the local pinned Git revision and local patch, not their external authenticity, runtime dependencies, or evaluation results. The temporary copy is removed after the check.
