@@ -71,3 +71,5 @@ SFT 启动器同时锁定状态目录和解析后的输出目录，防止使用�
 Historical source archives can be checked with `python contrib/restore_source.py official-baseline --verify-only` (or `sft-overlay`). Restoration requires an explicit new `--destination` and refuses overwrites; the archive manifests retain historical paths only as provenance. Archives remain private runtime data in `workspace/`.
 
 The per-file historical SFT overlay comparison and its limitations are documented in [OVERLAY_MIGRATION.md](OVERLAY_MIGRATION.md).
+
+The independent v0.9.5 LlamaFactory implements `use_unsloth_gc` in its own checkpointing module; that option alone does not require the separately installed Unsloth package. The server retains the historical dependency freeze and a path-updated copy at `workspace/strict-reproduction/llamafactory-v095-qlora32k-20261027-r1/checks/requirements-freeze-current-paths.txt`. This private, machine-specific snapshot is not a reproducible lockfile or proof of an installation on another machine.
