@@ -15,6 +15,7 @@
 | 本地模型路由与 few-shot | `inference/local_model_gateway.py`, `inference/prompts/visit_fewshot_3.json` | 分离主模型和摘要/记忆请求，辅助模型多实例按当前网关在途请求数分配；仅摘要插入样例，支持仅关闭辅助 thinking。需显式启动并配置模型服务；不支持流式响应。网关计数不等于 vLLM 内部队列长度。 |
 | 阶段观察 | `inference/observe.py` | 可选记录模型、搜索、网页读取、摘要、记忆和工具调用的开始/结束事件及耗时。完整请求/响应可能包含敏感内容，保存到私有目录；观察覆盖以实际函数映射为准，不等于所有外部调用都已自动记录。 |
 | 轨迹工作区 | `web/` | 中英文页面、数据集切换、轨迹和时间线；`web/build_gaia.py` 可从现有跨度构建新视图，页面每 5 秒检查当前数据；已终止任务通过工作区元数据单独标记，原始轨迹和评分不变。历史数据及运行日志不提交。 |
+| SFT 安全续训与监控 | `training_scripts/sft/supervise_qlora.py`, `observe_training.py` | 显式启动时检查最新非 ZeRO LoRA checkpoint、各 rank RNG、暂停标记与进程锁，保留每次尝试日志、显存及 TensorBoard 数据；不自动重试。当前已离线测试，重构版尚未再次实训。 |
 | 64K QLoRA 配置样例 | `training_scripts/sft/examples/qlora64k_10pct.yaml` | 按已运行的四卡 10% 配置整理；路径是占位符，需要明确替换。使用独立 LlamaFactory v0.9.5，官方子模块版本不同。配置文件本身不会启动训练。 |
 
 ## 目录与安全边界
@@ -57,3 +58,7 @@ export MEMORY_LOCAL_MODEL_NAME=QWEN38-MEMORY
 ```
 
 若设置了 `SERVER_ENDPOINTS_FILE`，其中的 `HOSTNAME_LIST` / `PORTS` 优先于上述环境变量。`LOCAL_PROMPT_MODEL_NAME` 仍可作为两种工具的旧版共同回退值；单独设置角色名称可避免把记忆请求误认为摘要。按实验需要选择是否启用本地记忆提示，改变提示会影响评估可比性。
+
+### SFT 启动与验证边界
+
+`supervise_qlora.py --help` 展示显式配置、LlamaFactory 环境、源码、独立状态目录、TensorBoard 路径及 GPU 数量。该入口仅支持已保存 adapter、optimizer、scheduler、trainer state 和对应 rank RNG 的非 ZeRO LoRA 检查点；损坏或不完整的最新检查点会停止，而不是擅自回退。`PAUSE` 或 `STOP` 标记会阻止启动，完成标记会阻止重复启动。检测 adapter 的结构、配置 JSON 和各状态文件是否非空，不意味着已证明所有 optimizer 张量无损。新的每 rank hooks 和监听脚本是对旧实验版本的整理：已使用模拟 checkpoint、暂停标记及真实已完成 checkpoint 做离线验证；尚未在新入口实际训练。
