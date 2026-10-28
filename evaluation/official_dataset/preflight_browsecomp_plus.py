@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 
@@ -16,7 +17,7 @@ def sha(path):
 
 def validate(task, record, references, qrels):
     qid = str(task.get("filename", ""))
-    if not qid or record.get("query_id") != qid:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", qid) or record.get("query_id") != qid:
         raise ValueError("query ID mismatch")
     matches = [row for row in references if str(row.get("query_id", "")) == qid]
     if len(matches) != 1:
@@ -38,6 +39,12 @@ def validate(task, record, references, qrels):
         raise ValueError("no qrel evidence for query; author evaluator would divide by zero")
     if record.get("status") not in ("completed", "failed"):
         raise ValueError("invalid prediction status")
+    output = record.get("result")
+    if (not isinstance(output, list) or not output or not isinstance(output[-1], dict)
+            or output[-1].get("type") != "output_text" or not isinstance(output[-1].get("output"), str)):
+        raise ValueError("invalid prediction output")
+    if record["status"] == "completed" and not output[-1]["output"].strip():
+        raise ValueError("completed prediction is empty")
     return {"query_id": qid, "reference_matches": 1, "qrel_entries": len(positives),
             "prediction_status": record["status"]}
 

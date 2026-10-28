@@ -51,3 +51,16 @@ answer, plus at least one qrel entry for the query. The upstream evaluator divid
 by the number of qrel entries and would otherwise raise a division-by-zero error.
 Preflight records input hashes on stdout, never calls a judge, and does not verify
 the authenticity of the reference, retrieval completeness, or model answer.
+
+`score_browsecomp_plus.py` provides an explicit single-case author-evaluator
+launcher. Supply `--source`, `--task`, `--record`, `--reference`,
+`--qrels`, `--out` and `--model`; see `--help`. It verifies the pinned
+clean author checkout, runs the preflight above, snapshots the record and invokes
+the author evaluator only when explicitly launched. Configure `OPENAI_API_KEY`
+and optionally `OPENAI_BASE_URL` in the environment. The endpoint must support
+the author's Responses API; a chat-completions-only endpoint may fail. A failed,
+malformed, duplicate or incomplete verdict is unscored, not incorrect. The
+output directory contains author logs and potentially sensitive answers. Input
+hashes and pre/post checks detect changes but do not authenticate sources or
+prove contamination-free evaluation. This launcher has only offline tests; it
+has not been verified with a live judge.

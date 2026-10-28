@@ -11,7 +11,7 @@ spec.loader.exec_module(m)
 class PreflightTests(unittest.TestCase):
     def test_reference_and_evidence(self):
         task = {"filename": "769", "question": "question?"}
-        record = {"query_id": "769", "status": "completed"}
+        record = {"query_id": "769", "status": "completed", "result": [{"type": "output_text", "output": "answer"}]}
         references = [{"query_id": "769", "query": "question?", "answer": "answer"}]
         result = m.validate(task, record, iter(references), iter(["769 0 doc1 1\n"]))
         self.assertEqual(result["qrel_entries"], 1)
