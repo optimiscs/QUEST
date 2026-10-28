@@ -69,3 +69,5 @@ export MEMORY_LOCAL_MODEL_NAME=QWEN38-MEMORY
 SFT 启动器同时锁定状态目录和解析后的输出目录，防止使用不同状态目录时重复写入同一输出。锁文件留在输出目录的父目录，训练停止后不会妨碍下一次获取锁；锁也传给 torchrun，启动器意外退出时仍由存活的 torchrun 持有。该机制只约束使用此启动器的进程；若 torchrun 及启动器均已退出，仍应核查是否有遗留 worker。
 
 Historical source archives can be checked with `python contrib/restore_source.py official-baseline --verify-only` (or `sft-overlay`). Restoration requires an explicit new `--destination` and refuses overwrites; the archive manifests retain historical paths only as provenance. Archives remain private runtime data in `workspace/`.
+
+The per-file historical SFT overlay comparison and its limitations are documented in [OVERLAY_MIGRATION.md](OVERLAY_MIGRATION.md).
