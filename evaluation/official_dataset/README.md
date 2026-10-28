@@ -29,3 +29,16 @@ For the later explicitly adapted benchmark copies, see [compat/README.md](compat
 ## Portable paths
 
 Both launchers keep the historical workspace paths as defaults. For a new installation, GAIA accepts `--source /path/to/gaia-leaderboard`; DRBench accepts `--sources-dir /path/to/author-checkouts`, `--runs-dir /path/to/new-runs`, and `--api-config /private/config.json`. The author checkouts must still match the pinned commits and have no modified tracked files; outputs must be new children of the selected runs directory. These options do not start any work by themselves, and private configuration should stay outside Git.
+
+## BrowseComp-Plus input preparation
+
+`prepare_browsecomp_plus.py --task TASK.json --trajectory TRAJECTORY.jsonl
+--events EVENTS.jsonl --out NEW_DIRECTORY` prepares a single
+`input/run_ID.json` for the author's evaluator (pass the `input` subdirectory) without executing it. The task is one
+JSON object with `filename` and `question`; the final trajectory record must
+match that question. The explicit events file supplies search counts and BM25
+document IDs. Missing or whitespace-only predictions are marked failed.
+The manifest records hashes and labels the record prepared, not scored. This
+does not authenticate the reference, verify corpus/index completeness, or prove
+that search events captured every retrieval; keep raw inputs for audit. The
+author's evaluator and judge configuration must be supplied separately.
