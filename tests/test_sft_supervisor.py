@@ -35,6 +35,13 @@ class SupervisorTests(unittest.TestCase):
    (c/'optimizer.pt').write_bytes(optimizer)
    (c/'rng_state_1.pth').write_bytes(b'not-empty-but-invalid')
    with self.assertRaisesRegex(ValueError,'safely loaded'):m.latest_checkpoint(root,4)
+ def test_optimizer_state_must_reference_known_parameters(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);c=self.make_checkpoint(root,50)
+   torch.save({'state':{2:{}},'param_groups':[{'params':[0]}]},c/'optimizer.pt')
+   with self.assertRaisesRegex(ValueError,'disagree'):m.latest_checkpoint(root,4)
+   torch.save({'state':{},'param_groups':[{'params':[0,0]}]},c/'optimizer.pt')
+   with self.assertRaisesRegex(ValueError,'disagree'):m.latest_checkpoint(root,4)
  def test_same_output_cannot_be_locked_twice(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);output=root/'output'

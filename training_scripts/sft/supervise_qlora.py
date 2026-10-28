@@ -53,6 +53,17 @@ def validate_training_states(path, rng_files):
     optim = load('optimizer.pt')
     if not isinstance(optim, dict) or not isinstance(optim.get('state'), dict) or not isinstance(optim.get('param_groups'), list) or not optim['param_groups']:
         raise ValueError('invalid optimizer state')
+    parameter_ids = []
+    for group in optim['param_groups']:
+        if not isinstance(group, dict) or not isinstance(group.get('params'), list):
+            raise ValueError('invalid optimizer parameter group')
+        parameter_ids.extend(group['params'])
+    if not parameter_ids or any(not isinstance(x, int) or isinstance(x, bool) for x in parameter_ids):
+        raise ValueError('invalid optimizer parameter identifiers')
+    known = set(parameter_ids)
+    if len(known) != len(parameter_ids) or any(not isinstance(k, int) or isinstance(k, bool) or k not in known or not isinstance(v, dict)
+                                               for k, v in optim['state'].items()):
+        raise ValueError('optimizer state and parameter groups disagree')
     scheduler = load('scheduler.pt')
     if not isinstance(scheduler, dict) or not isinstance(scheduler.get('last_epoch'), int) or isinstance(scheduler['last_epoch'], bool):
         raise ValueError('invalid scheduler state')
