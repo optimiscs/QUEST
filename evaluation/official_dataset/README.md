@@ -42,3 +42,12 @@ The manifest records hashes and labels the record prepared, not scored. This
 does not authenticate the reference, verify corpus/index completeness, or prove
 that search events captured every retrieval; keep raw inputs for audit. The
 author's evaluator and judge configuration must be supplied separately.
+
+Before invoking that evaluator, optionally run
+`preflight_browsecomp_plus.py --task TASK.json --record NEW_DIRECTORY/input/run_ID.json
+--reference REFERENCE.jsonl --qrels QREL_EVIDENCE.txt`. This read-only check
+requires one matching reference with the same question and a nonempty reference
+answer, plus at least one qrel entry for the query. The upstream evaluator divides
+by the number of qrel entries and would otherwise raise a division-by-zero error.
+Preflight records input hashes on stdout, never calls a judge, and does not verify
+the authenticity of the reference, retrieval completeness, or model answer.
