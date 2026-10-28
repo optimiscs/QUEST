@@ -61,11 +61,15 @@ class LauncherTests(unittest.TestCase):
                     score_dir = Path(cmd[cmd.index("--eval_dir") + 1])
                     snapshot_dir = Path(cmd[cmd.index("--input_dir") + 1])
                     self.assertEqual(json.loads((snapshot_dir / "run_1.json").read_text())["query_id"], "1")
-                    if exitcode == 0:
+                    if exitcode == "launch":
+                        raise OSError("sensitive detail")
+                    if exitcode == "mutate":
+                        ref.write_text(ref.read_text() + " ")
+                    if exitcode in (0, "mutate"):
                         (score_dir / "run_1_eval.json").write_text(json.dumps({
                             "query_id": "1", "is_completed": True,
                             "judge_result": {"parse_error": False, "correct": False}}))
-                    return type("Result", (), {"returncode": exitcode})()
+                    return type("Result", (), {"returncode": 0 if exitcode == "mutate" else exitcode})()
                 with patch.object(m, "check_source"), patch.object(m.subprocess, "run", side_effect=fake_run), \
                      patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"}), patch.object(sys, "argv", args), \
                      contextlib.redirect_stdout(io.StringIO()):
@@ -82,6 +86,13 @@ class LauncherTests(unittest.TestCase):
             failure = run_case("failure", 2)
             self.assertEqual(failure["status"], "unscored")
             self.assertIsNone(failure["correct"])
+            launch = run_case("launch", "launch")
+            self.assertEqual(launch["launch_error"], "OSError")
+            self.assertIsNone(launch["exit_code"])
+            self.assertNotIn("sensitive detail", (root / "launch" / "author.log").read_text())
+            mutated = run_case("mutated", "mutate")
+            self.assertEqual(mutated["status"], "unscored")
+            self.assertFalse(mutated["inputs_unchanged"])
 
 
 if __name__ == "__main__":

@@ -79,15 +79,31 @@ def main():
            "--qrel_evidence", str(paths["qrels"]), "--eval_dir", str(score_dir.resolve()),
            "--model", args.model, "--max_output_tokens", str(args.max_output_tokens)]
     start = time.monotonic()
+    exit_code, launch_error = None, None
     with (args.out / "author.log").open("w", encoding="utf-8") as log:
-        proc = subprocess.run(cmd, cwd=source, stdout=log, stderr=subprocess.STDOUT, check=False)
-    stable = hashes == {name: sha(path) for name, path in paths.items()} and sha(snapshot) == hashes["record"]
-    verdict = find_verdict(score_dir, result["query_id"]) if proc.returncode == 0 and stable else None
+        try:
+            proc = subprocess.run(cmd, cwd=source, stdout=log, stderr=subprocess.STDOUT, check=False)
+            exit_code = proc.returncode
+        except OSError as error:
+            # Exception details can contain paths or credentials; preserve its type only.
+            launch_error = type(error).__name__
+            log.write("author process could not be launched: " + launch_error + "\n")
+    try:
+        stable = hashes == {name: sha(path) for name, path in paths.items()} and sha(snapshot) == hashes["record"]
+    except OSError:
+        stable = False
+    try:
+        check_source(source)
+        source_unchanged = True
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        source_unchanged = False
+    verdict = find_verdict(score_dir, result["query_id"]) if exit_code == 0 and stable and source_unchanged else None
     receipt = {"benchmark": "BrowseComp-Plus", "status": "scored" if verdict else "unscored",
-               "source_commit": PIN, "judge_model": args.model, "exit_code": proc.returncode,
-               "input_sha256": hashes, "inputs_unchanged": stable, "wall_seconds": time.monotonic() - start,
-               "correct": verdict[1] if verdict else None,
-               "judge_result_path": str(verdict[0]) if verdict else None}
+               "source_commit": PIN, "judge_model": args.model, "exit_code": exit_code, "launch_error": launch_error,
+               "input_sha256": hashes, "inputs_unchanged": stable, "source_unchanged": source_unchanged,
+               "wall_seconds": time.monotonic() - start, "correct": verdict[1] if verdict else None,
+               "judge_result_path": str(verdict[0]) if verdict else None,
+               "judge_result_sha256": sha(verdict[0]) if verdict else None}
     (args.out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(receipt, indent=2))
     if not verdict:
