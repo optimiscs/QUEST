@@ -68,3 +68,9 @@ of the run.
 | `obj_eval_generation.py` | Batch generator for objective verifier scripts |
 | `generation_prompt.md` | Prompt template for verifier generation |
 | `utils/` | Shared verifier runtime and examples used in the prompt |
+
+## Offline summary structure audit
+
+`summary_audit.py --summary /path/to/summary.json --output /new/audit.json` checks a previously produced verifier summary without running Python from the verifier or contacting a model. A full-credit summary must have a nonempty tree, unique node IDs and consistently passing nodes. The audit records a SHA-256 and never overwrites an existing report.
+
+This is a structural check only: it does not verify that the tree covers the required rubric, that the score was produced by the claimed code, that the execution environment was isolated, or that cited evidence is correct. Its `training_eligible` field is always false. There is currently no validated end-to-end objective verifier execution and SFT acceptance path in this repository; do not treat this audit as one.
