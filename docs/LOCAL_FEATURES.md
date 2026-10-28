@@ -67,3 +67,5 @@ export MEMORY_LOCAL_MODEL_NAME=QWEN38-MEMORY
 开放题导出会核对评分输出、评分状态、候选答案、参考答案和轨迹文件的 SHA-256；缺少哈希的旧台账需重新生成，任何文件变化都会拒绝导出。评分时也检查输入快照前后是否变化。哈希只证明文件一致，不能证明轨迹与答案的语义关联或参考答案独立性；客观题验证器及真实端到端链路仍需另行验证。
 
 SFT 启动器同时锁定状态目录和解析后的输出目录，防止使用不同状态目录时重复写入同一输出。锁文件留在输出目录的父目录，训练停止后不会妨碍下一次获取锁；锁也传给 torchrun，启动器意外退出时仍由存活的 torchrun 持有。该机制只约束使用此启动器的进程；若 torchrun 及启动器均已退出，仍应核查是否有遗留 worker。
+
+Historical source archives can be checked with `python contrib/restore_source.py official-baseline --verify-only` (or `sft-overlay`). Restoration requires an explicit new `--destination` and refuses overwrites; the archive manifests retain historical paths only as provenance. Archives remain private runtime data in `workspace/`.
