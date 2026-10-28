@@ -10,7 +10,7 @@
 | GAIA 作者评分与格式提示 | `evaluation/official_dataset/gaia.py`, `run_gaia_prompt.py` | 导入固定作者评分器；可选生成格式提示须显式开启。分数、旧提示设置和污染审计保持分开。 |
 | 其他作者评分入口 | `evaluation/official_dataset/run.py` | 使用固定版本源码执行 DeepResearch Bench；对 BrowseComp/HLE 已知不兼容保持失败语义。不是所有数据集都已集成或验证。 |
 | 作者评分兼容补丁 | `evaluation/official_dataset/compat/` | 保存 BrowseComp、HLE、WideSearch、Mind2Web-2、LiveResearchBench 的五份适配补丁及固定版本生成入口；仅创建独立副本，不修改作者源码或自动评分。截图切分和模型替换等差异需明确报告。 |
-| DeepSeek 数据管线实验适配 | `contrib/deepseek_data/`, `task/` | 通过开关兼容 API、工具调用及开放题评分/导出；共用 DSML 解析并保留工具调用以外的文本。客观验证器执行、反馈重试、引用回填和端到端 SFT 数据导出仍未完成验证，不应当作生产就绪。 |
+| DeepSeek 数据管线实验适配 | `contrib/deepseek_data/`, `task/` | 通过开关兼容 API、工具调用及开放题评分/导出；共用 DSML 解析并保留工具调用以外的文本。开放题评分到台账及导出已用合成输入验证；客观验证器执行、反馈重试、引用回填和真实端到端数据生成仍未完成验证，不应当作生产就绪。 |
 | 摘要 JSON 格式重试 | `inference/summary_utils.py`, `tool_visit.py` | 缓存和非缓存读页都检查每次格式重试结果；未能解析的不写入成功缓存；`VISIT_MAX_CONTENT_TOKENS` 限制长网页文本，默认保持 95000。使用 cl100k 计数，与模型实际 tokenizer 可能不同。 |
 | 本地模型路由与 few-shot | `inference/local_model_gateway.py`, `inference/prompts/visit_fewshot_3.json` | 分离主模型和摘要/记忆请求，辅助模型多实例按当前网关在途请求数分配；仅摘要插入样例，支持仅关闭辅助 thinking。需显式启动并配置模型服务；不支持流式响应。网关计数不等于 vLLM 内部队列长度。 |
 | 阶段观察 | `inference/observe.py` | 可选记录模型、搜索、网页读取、摘要、记忆和工具调用的开始/结束事件及耗时。完整请求/响应可能包含敏感内容，保存到私有目录；观察覆盖以实际函数映射为准，不等于所有外部调用都已自动记录。 |

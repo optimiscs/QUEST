@@ -2,12 +2,17 @@
 import argparse, json, hashlib, os
 from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument("--ledger",required=True);p.add_argument("--output",required=True);p.add_argument("--manifest",required=True);a=p.parse_args()
-ledger=Path(a.ledger).resolve(); rows=[]; decisions=[]
+ledger=Path(a.ledger).resolve(); rows=[]; decisions=[]; seen_rollouts=set()
 def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 for no,line in enumerate(ledger.read_text().splitlines(),1):
  if not line.strip(): continue
  rec=json.loads(line); reason=None
  kind=rec.get("kind"); score=rec.get("score"); threshold={"objective":1.0,"openended":0.475}.get(kind)
+ task_id, rollout_id = rec.get("task_id"), rec.get("rollout_id")
+ if task_id is not None and rollout_id is not None:
+  identity=(str(kind),str(task_id),str(rollout_id))
+  if identity in seen_rollouts: raise ValueError(f"duplicate task/rollout in ledger at line {no}")
+  seen_rollouts.add(identity)
  if threshold is None or rec.get("score_status")!="scored" or not isinstance(score,(int,float)) or isinstance(score,bool) or not (0 <= score <= 1) or score < threshold: reason="not_scored_or_below_threshold"
  path=(ledger.parent/rec.get("sessions_path","")).resolve()
  if not reason and (not path.is_file() or not rec.get("task_id") or not rec.get("rollout_id")): reason="missing_sessions_or_provenance"

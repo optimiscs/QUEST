@@ -14,9 +14,16 @@ class SafetyTests(unittest.TestCase):
    (p/"ledger.jsonl").write_text("\n".join(map(json.dumps,rows))+"\n")
    subprocess.run([sys.executable,str(ADAPTER/"export_sft.py"),"--ledger",str(p/"ledger.jsonl"),"--output",str(p/"out.json"),"--manifest",str(p/"manifest.json")],check=True,capture_output=True)
    self.assertEqual(len(json.loads((p/"out.json").read_text())),1);self.assertEqual(len(json.loads((p/"manifest.json").read_text())["decisions"]),3)
+ def test_duplicate_rollout_is_rejected_before_export(self):
+  with tempfile.TemporaryDirectory() as d:
+   p=Path(d);(p/"sessions.jsonl").write_text(json.dumps({"messages":[{"role":"user","content":"q"},{"role":"assistant","content":"a"}]})+"\n")
+   row={"task_id":"a","rollout_id":"1","kind":"objective","score_status":"scored","score":1,"sessions_path":"sessions.jsonl"}
+   (p/"ledger.jsonl").write_text(json.dumps(row)+"\n"+json.dumps(row)+"\n")
+   r=subprocess.run([sys.executable,str(ADAPTER/"export_sft.py"),"--ledger",str(p/"ledger.jsonl"),"--output",str(p/"out.json"),"--manifest",str(p/"manifest.json")],capture_output=True,text=True)
+   self.assertNotEqual(r.returncode,0);self.assertFalse((p/"out.json").exists())
  def test_missing_reference_fails_before_network(self):
   with tempfile.TemporaryDirectory() as d:
-   p=Path(d);(p/"candidate").write_text(json.dumps({"question":"q","answer":"x"*120})+"\n");(p/"reference").write_text(json.dumps({"question":"q","prediction":"answer not found.","termination":"answer not found."})+"\n");(p/"criteria").write_text(json.dumps({"id":1,"prompt":"q","dimension_weight":{"d":1},"criterions":{"d":[{"criterion":"x","weight":1}]}})+"\n")
+   p=Path(d);(p/"candidate").write_text(json.dumps({"question":"q","answer":"x"*120})+"\n");(p/"reference").write_text(json.dumps({"question":"q","prediction":"answer not found.","termination":"answer not found."})+"\n");(p/"criteria").write_text(json.dumps({"id":1,"prompt":"q","dimension_weight":{"d":1},"criterions":{"d":[{"criterion":"x","explanation":"reason","weight":1}]}})+"\n")
    r=subprocess.run([sys.executable,str(ADAPTER/"score_openended.py"),"--criteria",str(p/"criteria"),"--candidate",str(p/"candidate"),"--reference",str(p/"reference"),"--out",str(p/"out")],capture_output=True,text=True,env={**os.environ,"DEEPSEEK_API_KEY":"not-used"})
    self.assertNotEqual(r.returncode,0);self.assertIn("incomplete or failed answer",r.stderr);self.assertFalse((p/"out").exists())
 if __name__=="__main__":unittest.main()
