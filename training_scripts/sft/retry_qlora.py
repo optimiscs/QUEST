@@ -23,8 +23,16 @@ WINDOW_SECONDS = 2 * 60 * 60
 MAX_FAILURES = 3
 
 
-def blocked(state):
-    return any((state / name).exists() for name in ('PAUSE', 'STOP', 'success.json'))
+def terminal_status(state, received):
+    if received:
+        return 'interrupted'
+    if (state / 'STOP').exists():
+        return 'stopped'
+    if (state / 'PAUSE').exists():
+        return 'paused'
+    if (state / 'success.json').exists():
+        return 'completed'
+    return None
 
 
 def read_failures(path, now):
@@ -106,8 +114,9 @@ def run(args):
         fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         previous = {s: signal.signal(s, stop) for s in (signal.SIGINT, signal.SIGTERM)}
         while True:
-            if blocked(state) or received:
-                return 'stopped_or_completed'
+            terminal = terminal_status(state, received)
+            if terminal:
+                return terminal
             now = time.time()
             if len(read_failures(history, now)) >= MAX_FAILURES:
                 return 'failure_limit'
@@ -127,13 +136,14 @@ def run(args):
                         rc = child.wait(timeout=5)
                         break
                     except subprocess.TimeoutExpired:
-                        if (blocked(state) or received) and child.poll() is None:
+                        if terminal_status(state, received) and child.poll() is None:
                             try:
                                 child.terminate()
                             except ProcessLookupError:
                                 pass
-            if blocked(state) or received:
-                return 'stopped_or_completed'
+            terminal = terminal_status(state, received)
+            if terminal:
+                return terminal
             if rc == 0:
                 return 'missing_success_marker'
             reason = classify(state, before, rc)
@@ -154,8 +164,9 @@ def run(args):
                 return 'checkpoint_requires_inspection'
             deadline = time.monotonic() + args.retry_delay
             while time.monotonic() < deadline:
-                if blocked(state) or received:
-                    return 'stopped_or_completed'
+                terminal = terminal_status(state, received)
+                if terminal:
+                    return terminal
                 time.sleep(min(5, max(0, deadline-time.monotonic())))
             # The supervisor checks the checkpoint again under its output lock.
     finally:
@@ -175,7 +186,7 @@ def main():
         p.error('--world-size must be positive and --retry-delay between 0 and 86400')
     status = run(a)
     print(json.dumps({'status':status}))
-    return 0 if status == 'stopped_or_completed' else 1
+    return 0 if status == 'completed' else 1
 
 
 if __name__ == '__main__':

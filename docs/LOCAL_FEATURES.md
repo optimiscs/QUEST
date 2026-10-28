@@ -83,7 +83,7 @@ It requires the same five paths and world size as the supervisor. After an
 unambiguously recorded failed torchrun, it checks the latest checkpoint, waits
 15 minutes by default, and lets the supervisor recheck the checkpoint and output
 lock before retrying. Three failures of any kind in two hours stop the wrapper;
-this is stricter than counting only identical failures. It stops on STOP/PAUSE,
+this is stricter than counting only identical failures. It reports completed, stopped, paused and interrupted separately and exits zero only on completion. It stops on STOP/PAUSE,
 signals, ambiguous/missing receipts, missing logs, detected OOM or non-finite
 loss/gradient, and an incomplete or completed checkpoint. It does not quarantine
 checkpoints or fall back automatically.

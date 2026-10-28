@@ -1,4 +1,4 @@
-import importlib.util,json,tempfile,time,unittest
+import importlib.util,json,subprocess,sys,tempfile,time,unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -31,7 +31,7 @@ class RetryTests(unittest.TestCase):
   return FakeChild,calls
  def test_failure_then_success(self):
   fake,calls=self.fake_launcher([1,0])
-  with patch.object(m.subprocess,'Popen',fake),patch.object(m,'validate_resume',return_value=None):self.assertEqual(m.run(self.args),'stopped_or_completed')
+  with patch.object(m.subprocess,'Popen',fake),patch.object(m,'validate_resume',return_value=None):self.assertEqual(m.run(self.args),'completed')
   self.assertEqual(len(calls),2)
   self.assertEqual(len((self.state/'retry-watchdog/failures.jsonl').read_text().splitlines()),1)
  def test_stops_after_three_failures(self):
@@ -62,7 +62,7 @@ class RetryTests(unittest.TestCase):
    def terminate(self):self.done=True
    def send_signal(self,signum):self.done=True
   with patch.object(m.subprocess,'Popen',RunningChild):
-   self.assertEqual(m.run(self.args),'stopped_or_completed')
+   self.assertEqual(m.run(self.args),'stopped')
   self.assertEqual(len(calls),1)
  def test_no_receipt_never_retries(self):
   fake,calls=self.fake_launcher(['no_receipt'])
@@ -80,8 +80,16 @@ class RetryTests(unittest.TestCase):
  def test_pause_prevents_launch(self):
   self.state.mkdir();(self.state/'PAUSE').touch()
   fake,calls=self.fake_launcher([0])
-  with patch.object(m.subprocess,'Popen',fake):self.assertEqual(m.run(self.args),'stopped_or_completed')
+  with patch.object(m.subprocess,'Popen',fake):self.assertEqual(m.run(self.args),'paused')
   self.assertEqual(calls,[])
+ def test_cli_pause_is_not_success(self):
+  self.state.mkdir();(self.state/'PAUSE').touch()
+  script=ROOT/'training_scripts/sft/retry_qlora.py'
+  command=[sys.executable,str(script),'--config',str(self.args.config),'--state-dir',str(self.state),
+   '--env-dir',str(self.args.env_dir),'--llamafactory',str(self.args.llamafactory),'--resource-tb',str(self.args.resource_tb)]
+  result=subprocess.run(command,text=True,capture_output=True)
+  self.assertNotEqual(result.returncode,0)
+  self.assertEqual(json.loads(result.stdout)['status'],'paused')
  def test_corrupt_history_never_launches(self):
   d=self.state/'retry-watchdog';d.mkdir(parents=True);(d/'failures.jsonl').write_text('broken')
   fake,calls=self.fake_launcher([0])
