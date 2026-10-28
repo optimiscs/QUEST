@@ -189,6 +189,18 @@ class MultiTurnReactAgent(FnCallAgent):
                     content = ""
                 
                 print(content)
+                # Preserve raw output above; translate DeepSeek textual DSML tool calls.
+                if ("<tool_call>" not in content or "</tool_call>" not in content) and "DSML" in content and os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":
+                    calls = []
+                    for name, body in re.findall(r'<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke\s+name="([^"]+)"[^>]*>(.*?)(?=<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke|$)', content, re.S):
+                        args = {}
+                        for key, raw in re.findall(r'parameter\s+name="([^"]+)"[^>]*>(.*?)(?=</[｜|]{1,2}DSML)', body, re.S):
+                            try: args[key] = json.loads(raw.strip())
+                            except (ValueError, TypeError): args[key] = raw.strip()
+                        if args: calls.append("<tool_call>\n" + json.dumps({"name": name, "arguments": args}, ensure_ascii=False) + "\n</tool_call>")
+                    if calls:
+                        content = "\n".join(calls)
+                        print("[DeepSeek adapter] normalized DSML tool calls:", len(calls))
                 
                 # Extra processing for stop sequences (in case API doesn't handle correctly)
                 stop_sequences = ["\n<tool_response>", "<tool_response>"]
@@ -574,6 +586,7 @@ class MultiTurnReactAgent(FnCallAgent):
                 self.save_trajectory(result)
                 return result
 
+        termination = 'maximum model calls reached'
         content = messages[-1]['content']
         if '<answer>' in content and '</answer>' in content:
             answer_text = messages[-1]['content'].split('<answer>')[1].split('</answer>')[0]

@@ -956,6 +956,36 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
     def call_server(self, msgs, max_tries=10):
 
+        if os.getenv("QUEST_DEEPSEEK_TEACHER") == "1":
+            client = OpenAI(api_key=os.environ["DEEPSEEK_API_KEY"], base_url=os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"), timeout=600.0)
+            response = None
+            for attempt in range(max_tries):
+                try:
+                    response = client.chat.completions.create(model=os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"), messages=msgs, max_tokens=int(os.getenv("LLM_MAX_TOKENS", "10000")), stop=["\n<tool_response>", "<tool_response>"], extra_body={"thinking":{"type":"disabled"}} if os.getenv("QUEST_TEACHER_DISABLE_THINKING")=="1" else {})
+                    break
+                except (APIError, APIConnectionError, APITimeoutError) as exc:
+                    print(f"DeepSeek call failed on attempt {attempt + 1}: {type(exc).__name__}")
+                    if attempt + 1 == max_tries:
+                        raise
+                    time.sleep(min(2 ** attempt, 30))
+            if response is None:
+                raise RuntimeError("DeepSeek returned no response")
+            message = response.choices[0].message
+            content = message.content or ""
+            print("[DeepSeek raw content]", content)
+            if ("<tool_call>" not in content or "</tool_call>" not in content) and "DSML" in content:
+                calls = []
+                for name, body in re.findall(r'<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke\s+name="([^"]+)"[^>]*>(.*?)(?=<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke|$)', content, re.S):
+                    args = {}
+                    for key, raw in re.findall(r'parameter\s+name="([^"]+)"[^>]*>(.*?)(?=</[｜|]{1,2}DSML)', body, re.S):
+                        try: args[key] = json.loads(raw.strip())
+                        except (ValueError, TypeError): args[key] = raw.strip()
+                    if args: calls.append("<tool_call>\n" + json.dumps({"name": name, "arguments": args}, ensure_ascii=False) + "\n</tool_call>")
+                if calls: content = "\n".join(calls)
+            reasoning = getattr(message, "reasoning_content", None)
+            if reasoning:
+                content = "<think>\n" + reasoning + "\n</think>\n" + content
+            return content.strip() or None
         openai_api_key = "EMPTY"
         FAILOVER_THRESHOLD = 2  # Switch endpoint after 2 consecutive failures
 

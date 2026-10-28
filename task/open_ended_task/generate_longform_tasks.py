@@ -378,7 +378,7 @@ async def main():
     Main async function, execute all iterations concurrently
     """
     # Total number of tasks: control the total number to generate
-    num_iterations = 10  # Can be modified as needed
+    num_iterations = int(os.getenv("QUEST_SMOKE_TASKS", "10"))
     
     # Concurrency control: use Semaphore to limit the number of workers running simultaneously
     workers = 1  # Can be modified as needed

@@ -2,7 +2,8 @@
 """Score explicit GAIA submission records with the pinned upstream scorer."""
 import argparse, contextlib, hashlib, importlib.util, json, subprocess, sys
 from pathlib import Path
-ROOT = Path('/root/autodl-tmp/Quest/quest4b-gaia-20261027')
+import os
+ROOT = Path(os.environ.get('QUEST_PROJECT_ROOT', str(Path(__file__).resolve().parents[3])))
 SOURCE = ROOT/'strict-reproduction/official-sources/gaia-leaderboard'
 PIN = '9f133d71362e77b3539f1514f31b9c101a545fec'
 

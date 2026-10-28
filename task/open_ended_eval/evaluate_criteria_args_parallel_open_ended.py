@@ -85,8 +85,8 @@ class AIClient():
         print(f"--- API call | endpoint source: {endpoint_source} | using: {selected_host}:{selected_port} ---")
 
         client = OpenAI(
-            api_key="EMPTY",
-            base_url=openai_api_base,
+            api_key=os.environ.get("DEEPSEEK_API_KEY", "EMPTY"),
+            base_url=os.environ.get("DEEPSEEK_API_BASE", openai_api_base),
             timeout=600.0,
         )
 
@@ -95,6 +95,7 @@ class AIClient():
                 model=self.model,
                 messages=msgs,
                 temperature=0.6,
+                **({"extra_body": {"thinking": {"type": "disabled"}}} if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" else {}),
             )
             content = response.choices[0].message.content
             if content and content.strip():
@@ -257,7 +258,7 @@ def evaluate_single_criterion(document_content, ref_content, query, criterion_na
                 continue
 
     # All retries failed, return default result with 0 score
-    print(f"    All retries failed, assigning 0 score")
+    raise RuntimeError("Criterion scoring failed after retries; no score assigned")
     default_result = {
         'score_a': 0.0,  # Document A (to evaluate)
         'score_b': 0.0,  # Document B (reference)

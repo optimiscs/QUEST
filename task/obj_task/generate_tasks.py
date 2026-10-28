@@ -361,8 +361,8 @@ async def run_single_iteration(iteration_id, subcategory_counts, complexity_coun
 
 async def main():
     """Documentation omitted."""
-    num_iterations = 20
-    workers = 20
+    num_iterations = int(os.getenv("QUEST_SMOKE_TASKS", "20"))
+    workers = int(os.getenv("QUEST_WORKERS", "20"))
     global executor
     executor = ThreadPoolExecutor(max_workers=workers)
     semaphore = asyncio.Semaphore(workers)

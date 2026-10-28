@@ -13,10 +13,10 @@ from litellm import completion
 # model="openai/gpt-5" 
 
 # AZURE
-os.environ["AZURE_API_KEY"] = "" # "my-azure-api-key"
-os.environ["AZURE_API_BASE"] = "" # "https://example-endpoint.openai.azure.com"
-os.environ["AZURE_API_VERSION"] = "" # "2023-05-15"
-model="azure/gpt-5" 
+os.environ["AZURE_API_KEY"] = os.environ.get("AZURE_API_KEY", "") # "my-azure-api-key"
+os.environ["AZURE_API_BASE"] = os.environ.get("AZURE_API_BASE", "") # "https://example-endpoint.openai.azure.com"
+os.environ["AZURE_API_VERSION"] = os.environ.get("AZURE_API_VERSION", "") # "2023-05-15"
+model=os.environ.get("QUEST_PIPELINE_MODEL", "azure/gpt-5")
 
 
 # Import dimension weight generation prompts for English
@@ -47,7 +47,7 @@ class AIClient():
         response = completion(
             model=model,
             messages=[{ "content": user_prompt,"role": "user"}],
-            reasoning_effort="low",
+            **({"extra_body": {"thinking": {"type": "disabled"}}} if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" else {"reasoning_effort": "low"}),
             max_tokens=5120
         )
         # print(response)

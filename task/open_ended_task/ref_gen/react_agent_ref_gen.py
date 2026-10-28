@@ -1,4 +1,5 @@
 import json
+import re
 import json5
 import os
 from typing import Dict, Iterator, List, Literal, Optional, Tuple, Union
@@ -62,16 +63,34 @@ class MultiTurnReactAgent(FnCallAgent):
             try:
                 print(f"--- Attempting to call the service, try {attempt + 1}/{max_tries} ---")
                 chat_response = completion(
-                    model="bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0", 
+                    model=os.environ.get("QUEST_PIPELINE_MODEL", "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
                     messages=msgs,
                     stop=["\n<tool_response>", "<tool_response>"],
                     # reasoning_effort="low",
-                    max_tokens=40000,
+                    max_tokens=int(os.getenv("QUEST_REF_MAX_TOKENS", "40000")),
+                    **({"extra_body": {"thinking": {"type": "disabled"}}} if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" else {}),
                 )
-                content = chat_response.choices[0].message.content
+                content = chat_response.choices[0].message.content or ""
+                if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":
+                    print("[DeepSeek raw response]", content)
+                if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" and "<tool_call>" in content and "</tool_call>" not in content:
+                    try:
+                        embedded, _ = json.JSONDecoder().raw_decode(content.split("<tool_call>", 1)[1].strip())
+                        if isinstance(embedded, dict) and embedded.get("name"):
+                            content = "<tool_call>\n" + json.dumps(embedded, ensure_ascii=False) + "\n</tool_call>"
+                    except (ValueError, TypeError): pass
+                if ("<tool_call>" not in content or "</tool_call>" not in content) and "DSML" in content and os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":
+                    calls = []
+                    for name, body in re.findall(r'<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke\s+name="([^"]+)"[^>]*>(.*?)(?=<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke|$)', content, re.S):
+                        args = {}
+                        for key, raw in re.findall(r'parameter\s+name="([^"]+)"[^>]*>(.*?)(?=</[｜|]{1,2}DSML)', body, re.S):
+                            try: args[key] = json.loads(raw.strip())
+                            except (ValueError, TypeError): args[key] = raw.strip()
+                        if args: calls.append("<tool_call>\n" + json.dumps({"name":name, "arguments":args}, ensure_ascii=False) + "\n</tool_call>")
+                    if calls: content = "\n".join(calls)
 
                 # OpenRouter provides API calling. If you want to use OpenRouter, you need to uncomment line 89 - 90.
-                if "reasoning_content" in dict(chat_response.choices[0].message):
+                if getattr(chat_response.choices[0].message, "reasoning_content", None):
                     reasoning_content = "<think>\n" + chat_response.choices[0].message.reasoning_content.strip() + "\n</think>"
                     content = reasoning_content + content                
                 

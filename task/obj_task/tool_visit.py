@@ -396,6 +396,8 @@ class Visit(BaseTool):
         try:
             url = params["url"]
             goal = params["goal"]
+            if isinstance(goal, list):
+                goal = "\n".join(str(item) for item in goal)
         except:
             return "[Visit] Invalid request format: Input must be a JSON object containing 'url' and 'goal' fields"
 
@@ -531,8 +533,8 @@ class Visit(BaseTool):
         Returns:
             str: The webpage content or error message
         """
-        max_retries = 3
-        timeout = 50
+        max_retries = int(os.getenv("QUEST_SMOKE_VISIT_RETRIES", "3"))
+        timeout = int(os.getenv("QUEST_SMOKE_VISIT_TIMEOUT", "50"))
         
         for attempt in range(max_retries):
             headers = {

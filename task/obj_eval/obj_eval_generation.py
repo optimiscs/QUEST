@@ -102,7 +102,7 @@ def call_model_api(content, model_name):
     response = completion(
         model=model_name,
         messages=[{ "content": content,"role": "user"}],
-        reasoning_effort="high",
+        **({"extra_body": {"thinking": {"type": "disabled"}}} if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" else {"reasoning_effort": "high"}),
         max_tokens=32384
     )
     

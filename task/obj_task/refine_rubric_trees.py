@@ -52,7 +52,7 @@ def build_litellm_kwargs(model_name: str, messages: list, max_tokens: int, tempe
         "max_tokens": max_tokens,
         "temperature": temperature,
         "num_retries": 3,
-        "reasoning_effort": os.environ.get("REFINE_REASONING_EFFORT", "high"),
+        **({"extra_body": {"thinking": {"type": "disabled"}}} if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" else {"reasoning_effort": os.environ.get("REFINE_REASONING_EFFORT", "high")}),
     }
 
     api_base = os.environ.get("REFINE_API_BASE") or os.environ.get("FILTER_API_BASE")
@@ -112,7 +112,7 @@ async def call_refine_model(
         "cost": 0.0,
     }
     hidden = getattr(response, "_hidden_params", {}) or {}
-    if "response_cost" in hidden:
+    if hidden.get("response_cost") is not None:
         cost_info["cost"] = float(hidden["response_cost"])
 
     return content.strip(), cost_info

@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-ROOT = Path('/root/autodl-tmp/Quest/quest4b-gaia-20261027')
+ROOT = Path(os.environ.get('QUEST_PROJECT_ROOT', str(Path(__file__).resolve().parents[3])))
 HOME_DIR = ROOT / 'strict-reproduction/official-dataset-eval-20261028'
 SOURCES = HOME_DIR / 'sources'
 PINS = {'browsecomp': ('simple-evals', '652c89d0ca9df547706735883097e9537d40dc47'),
@@ -82,7 +82,8 @@ def main():
         q = selected.get(str(item.get('id')))
         if not q or item.get('prompt') != q.get('prompt') or not item.get('article'): raise ValueError('Raw records do not match official queries')
     if set(selected) != {str(x['id']) for x in records}: raise ValueError('Query/answer ID sets differ')
-    config = json.loads((ROOT / 'strict-reproduction/.secrets/api_config.json').read_text())['common']
+    config_path = Path(os.environ.get('QUEST_EVAL_API_CONFIG', str(ROOT / 'strict-reproduction/.secrets/api_config.json')))
+    config = json.loads(config_path.read_text())['common']
     model = config['JUDGE_MODEL_NAME'].split('/')[-1]
     out.mkdir(parents=True, exist_ok=False)
     for name in ('logs', 'raw', 'cleaned', 'race', 'fact', 'work'): (out / name).mkdir()

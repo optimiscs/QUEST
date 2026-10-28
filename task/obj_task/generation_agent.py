@@ -156,6 +156,8 @@ class MultiTurnReactAgent(FnCallAgent):
             "stop": ["\n<tool_response>", "<tool_response>"],
             "num_retries": max_tries,
         }
+        if os.getenv("QUEST_SMOKE_DISABLE_THINKING") == "1":
+            call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         # if 'top_p' in self.llm_generate_cfg:
         #     call_kwargs["top_p"] = self.llm_generate_cfg.get('top_p', 0.95)
         if 'presence_penalty' in self.llm_generate_cfg:
@@ -232,6 +234,18 @@ class MultiTurnReactAgent(FnCallAgent):
                     content = ""
                 
                 print(content)
+                # Preserve raw output above; translate DeepSeek textual DSML tool calls.
+                if ("<tool_call>" not in content or "</tool_call>" not in content) and "DSML" in content and os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":
+                    calls = []
+                    for name, body in re.findall(r'<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke\s+name="([^"]+)"[^>]*>(.*?)(?=<[｜|]{1,2}DSML[｜|]{1,2}\s*invoke|$)', content, re.S):
+                        args = {}
+                        for key, raw in re.findall(r'parameter\s+name="([^"]+)"[^>]*>(.*?)(?=</[｜|]{1,2}DSML)', body, re.S):
+                            try: args[key] = json.loads(raw.strip())
+                            except (ValueError, TypeError): args[key] = raw.strip()
+                        if args: calls.append("<tool_call>\n" + json.dumps({"name": name, "arguments": args}, ensure_ascii=False) + "\n</tool_call>")
+                    if calls:
+                        content = "\n".join(calls)
+                        print("[DeepSeek adapter] normalized DSML tool calls:", len(calls))
                 stop_sequences = ["\n<tool_response>", "<tool_response>"]
                 for stop_seq in stop_sequences:
                     if content and stop_seq in content:

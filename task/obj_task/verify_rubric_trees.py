@@ -69,7 +69,7 @@ class ClaudeVerifier:
             "max_tokens": 32768,
             "temperature": 1,
             "num_retries": 3,
-            "thinking":{"type": "enabled", "budget_tokens": 16384},
+            **({"extra_body": {"thinking": {"type": "disabled"}}} if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" else {"thinking": {"type": "enabled", "budget_tokens": 16384}}),
         }
         if self.model_id.startswith("azure/"):
             api_key = os.environ.get("RUBRIC_VERIFIER_AZURE_API_KEY")
