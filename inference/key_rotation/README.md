@@ -11,3 +11,10 @@ The pool's exhausted flags persist. If a previously exhausted key is replenished
 ### Configurable paths
 
 Set `QUEST_KEY_ROTATION=0` to disable the adapter. `QUEST_KEY_POOL_DIR` changes the secrets directory; `QUEST_KEY_POOL_FILE`, `QUEST_KEY_STATE_FILE`, `QUEST_KEY_LOCK_FILE`, and `QUEST_KEY_AUDIT_DIR` override individual locations. Default pool, state, and lock filenames are `api_key_pool.json`, `key_rotation_state.json`, and `key_rotation.lock`; set the environment variables explicitly for a different pool. Historic audit logs are retained in their original experiment directory. Keep pool and state files private, never commit credentials or state, and use separate state/lock files when pools differ.
+
+The adapter checks the HTTP call signatures before patching and its offline
+behavior can be checked with `python inference/key_rotation/test_rotation.py`.
+Python may report and ignore exceptions raised while importing `sitecustomize`,
+so a startup warning is not a fail-closed guarantee; verify the audit events for
+the actual process. The patch remains process-wide and only covers the explicitly
+matched hosts and HTTP clients.

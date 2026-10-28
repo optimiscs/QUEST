@@ -8,6 +8,7 @@ The gateway does not start models or evaluation jobs.
 import argparse
 import asyncio
 import json
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -119,7 +120,10 @@ class Router:
             else:
                 self.active[index] -= 1
             info.update(status=status, wall_seconds=round(time.monotonic()-started, 6))
-            self.record(info)
+            try:
+                await asyncio.to_thread(self.record, info)
+            except Exception:
+                logging.exception("Unable to write gateway metrics")
 
 
 def make_app(args):

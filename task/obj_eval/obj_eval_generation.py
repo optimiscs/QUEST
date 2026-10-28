@@ -1,3 +1,7 @@
+import sys as _quest_options_sys
+from pathlib import Path as _QuestOptionsPath
+_quest_options_sys.path.insert(0, str(_QuestOptionsPath(__file__).resolve().parents[1]))
+from contrib.deepseek_data.request_options import reasoning_options
 import os
 import time
 import re
@@ -102,7 +106,7 @@ def call_model_api(content, model_name):
     response = completion(
         model=model_name,
         messages=[{ "content": content,"role": "user"}],
-        **({"extra_body": {"thinking": {"type": "disabled"}}} if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" else {"reasoning_effort": "high"}),
+        **reasoning_options({"reasoning_effort": "high"}),
         max_tokens=32384
     )
     

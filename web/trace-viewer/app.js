@@ -354,7 +354,7 @@
 
   /* ---------- workspace folders ---------- */
 
-  const siteLocale = document.body.dataset.site === "zh" ? "zh" : "en";
+  const siteLocale = /(?:^|\/)trace-viewer-zh(?:\/|$)/.test(window.location.pathname) ? "zh" : "en";
 
   function setupWorkspaceSwitcher() {
     const isZh = siteLocale === "zh";

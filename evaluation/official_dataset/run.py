@@ -41,7 +41,7 @@ def verify_source(benchmark, sources=SOURCES):
     directory, expected = PINS[benchmark]
     root = sources / directory
     actual = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
-    status = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'], text=True).strip()
+    status = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=all', '--ignored=matching'], text=True).strip()
     if actual != expected or status:
         raise RuntimeError(f'Upstream source mismatch or tracked files modified: {benchmark}')
     return root, actual

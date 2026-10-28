@@ -23,7 +23,7 @@ class ScoreSafetyTests(unittest.TestCase):
   def fake(cmd,**kw):self.out.write_text(json.dumps(self.good_result())+'\n');return SimpleNamespace(returncode=0)
   self.assertEqual(self.call(fake),0)
   meta=json.loads(self.out.with_suffix('.status.json').read_text())
-  sessions=self.p/'sessions.jsonl';sessions.write_text(json.dumps({'is_final':True,'messages':[{'role':'user','content':'q'},{'role':'assistant','content':'a'}]})+'\n')
+  sessions=self.p/'sessions.jsonl';sessions.write_text(json.dumps({'question':'q with sources','iter':1,'task_id':1,'is_final':True,'messages':[{'role':'user','content':'q'},{'role':'assistant','content':'a'*120}]})+'\n')
   ledger=self.p/'ledger.jsonl';base=ROOT/'contrib/deepseek_data'
   cmd=[sys.executable,str(base/'build_openended_ledger.py'),'--score',str(self.out),'--candidate',meta['input_snapshots']['candidate'],'--reference',meta['input_snapshots']['reference'],'--sessions',str(sessions),'--reference-kind','independent_agent','--out',str(ledger)]
   result=subprocess.run(cmd,text=True,capture_output=True);self.assertEqual(result.returncode,0,result.stderr)

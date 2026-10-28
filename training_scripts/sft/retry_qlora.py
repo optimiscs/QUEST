@@ -7,7 +7,6 @@ No process is started merely by importing this module.
 """
 import argparse
 import fcntl
-import importlib.util
 import json
 import math
 import re
@@ -17,6 +16,9 @@ import signal
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from checkpoint_utils import latest_checkpoint, output_from_config
 
 SUPERVISOR = Path(__file__).with_name('supervise_qlora.py')
 WINDOW_SECONDS = 2 * 60 * 60
@@ -79,15 +81,8 @@ def classify(state, before, returncode):
 
 def validate_resume(args):
     """Check the checkpoint without launching; supervisor checks again under lock."""
-    import yaml
-    settings = yaml.safe_load(args.config.read_text())
-    if not isinstance(settings, dict) or not settings.get('output_dir'):
-        raise ValueError('invalid training config')
-    output = Path(settings['output_dir']).expanduser().resolve()
-    spec = importlib.util.spec_from_file_location('quest_sft_supervisor', SUPERVISOR)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    checkpoint = module.latest_checkpoint(output, args.world_size)
+    _, output = output_from_config(args.config)
+    checkpoint = latest_checkpoint(output, args.world_size)
     if checkpoint is None and output.exists() and any(output.iterdir()):
         raise ValueError('nonempty output has no verified checkpoint')
     return str(checkpoint) if checkpoint else None

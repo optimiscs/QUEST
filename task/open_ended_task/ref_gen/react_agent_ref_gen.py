@@ -1,3 +1,7 @@
+import sys as _quest_options_sys
+from pathlib import Path as _QuestOptionsPath
+_quest_options_sys.path.insert(0, str(_QuestOptionsPath(__file__).resolve().parents[2]))
+from contrib.deepseek_data.request_options import reasoning_options
 import json
 import sys as _quest_sys
 from pathlib import Path as _QuestPath
@@ -74,7 +78,7 @@ class MultiTurnReactAgent(FnCallAgent):
                     stop=["\n<tool_response>", "<tool_response>"],
                     # reasoning_effort="low",
                     max_tokens=int(os.getenv("QUEST_REF_MAX_TOKENS", "40000")),
-                    **({"extra_body": {"thinking": {"type": "disabled"}}} if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" else {}),
+                    **reasoning_options({}),
                 )
                 content = chat_response.choices[0].message.content or ""
                 if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":

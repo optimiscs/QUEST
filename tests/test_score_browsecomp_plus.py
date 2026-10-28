@@ -97,3 +97,16 @@ class LauncherTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_source_check_refuses_untracked_and_ignored_files(tmp_path):
+    calls = []
+    def git(argv, **kwargs):
+        calls.append(argv)
+        output = m.PIN if 'rev-parse' in argv else '?? injected.py\n'
+        return type('Result', (), {'stdout': output})()
+    with patch.object(m.subprocess, 'run', side_effect=git):
+        with unittest.TestCase().assertRaises(ValueError):
+            m.check_source(tmp_path)
+    assert '--untracked-files=all' in calls[-1]
+    assert '--ignored=matching' in calls[-1]

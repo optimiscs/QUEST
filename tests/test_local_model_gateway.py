@@ -67,3 +67,10 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):gateway.validate_fewshot(self.few)
 
 if __name__=='__main__': unittest.main()
+
+class MetricsFailureTests(GatewayTests):
+    async def test_metrics_failure_does_not_replace_response(self):
+        self.metrics.mkdir()
+        status, body = await self.post('p')
+        self.assertEqual(status, 200)
+        self.assertEqual(body['choices'][0]['message']['content'], 'ok')

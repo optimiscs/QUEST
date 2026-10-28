@@ -13,6 +13,9 @@ class ObserverTests(unittest.TestCase):
    rows=[json.loads(x) for x in events.read_text().splitlines()]
    self.assertEqual([r['kind'] for r in rows if r['event']=='span_end'],['reader','summary'])
    self.assertTrue(all(r['seconds']>=0 for r in rows if r['event']=='span_end'))
+   coverage=next(r for r in rows if r['event']=='coverage')
+   self.assertEqual(coverage['observed_kinds'],['reader','summary'])
+   self.assertIn('policy_model',coverage['configured_kinds'])
    self.assertNotIn('secret-test-value',events.read_text())
    self.assertIn('[REDACTED]',events.read_text())
    self.assertEqual(events.stat().st_mode & 0o777,0o600)

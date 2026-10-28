@@ -23,3 +23,11 @@ class EvalPathTests(unittest.TestCase):
   self.assertIsInstance(assignments[0].value,ast.Call)
   self.assertEqual(assignments[0].value.func.id,'key_rotation_dir')
 if __name__=='__main__':unittest.main()
+
+def test_source_check_includes_untracked_and_ignored_files():
+ from unittest.mock import patch
+ file=ROOT/'evaluation/official_dataset/run.py';spec=importlib.util.spec_from_file_location('quest_runner_dirty',file);mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+ with patch.object(mod.subprocess,'check_output',side_effect=[mod.PINS['drbench'][1]+'\n','?? shadow.py\n']) as check:
+  with unittest.TestCase().assertRaises(RuntimeError):mod.verify_source('drbench',Path('/tmp/sources'))
+  assert '--untracked-files=all' in check.call_args_list[1].args[0]
+  assert '--ignored=matching' in check.call_args_list[1].args[0]

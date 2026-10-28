@@ -113,3 +113,9 @@ and saved status is not a live PID check. Any ETA is a conditional projection
 from recent recorded step-end intervals; future evaluation and save costs can
 differ. It does not replace the former scheduled anomaly investigation or data
 quality workflow.
+
+The inference observer emits a `coverage` event with configured and observed
+span kinds when the process exits. An absent kind may simply be unused by that
+run; the event is a diagnostic, not proof of complete instrumentation. The HTTP
+credential adapter validates call signatures, but still relies on process-wide
+patches; see `inference/key_rotation/README.md` for its startup limitations.

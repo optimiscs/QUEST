@@ -1,6 +1,6 @@
 # Dataset-author evaluation integration
 
-The upstream repositories live outside QUEST in `strict-reproduction/official-dataset-eval-20261028/sources`. `run.py` pins their exact Git revisions and refuses modified tracked files. Legacy QUEST evaluators and historical results remain intact and are not read automatically.
+The upstream repositories live outside QUEST in `strict-reproduction/official-dataset-eval-20261028/sources`. `run.py` pins their exact Git revisions and refuses modified, untracked, and ignored files. Legacy QUEST evaluators and historical results remain intact and are not read automatically.
 
 * BrowseComp (`652c89d0ca9df547706735883097e9537d40dc47`): blocked. The official grader returns `correct: yes` but the official aggregate compares that to `yes`. The launcher refuses to report misleading accuracy without an approved upstream correction.
 * HLE (`22ed3074b1e7b134bcbc09028d0ba320839b0655`): blocked. The official Pydantic structured-output call returns HTTP 400 from the current DeepSeek endpoint. The launcher does not downgrade JSON Schema or alter official code.
@@ -28,7 +28,7 @@ For the later explicitly adapted benchmark copies, see [compat/README.md](compat
 
 ## Portable paths
 
-Both launchers keep the historical workspace paths as defaults. For a new installation, GAIA accepts `--source /path/to/gaia-leaderboard`; DRBench accepts `--sources-dir /path/to/author-checkouts`, `--runs-dir /path/to/new-runs`, and `--api-config /private/config.json`. The author checkouts must still match the pinned commits and have no modified tracked files; outputs must be new children of the selected runs directory. These options do not start any work by themselves, and private configuration should stay outside Git.
+Both launchers keep the historical workspace paths as defaults. For a new installation, GAIA accepts `--source /path/to/gaia-leaderboard`; DRBench accepts `--sources-dir /path/to/author-checkouts`, `--runs-dir /path/to/new-runs`, and `--api-config /private/config.json`. The author checkouts must still match the pinned commits and have no modified, untracked, or ignored files; outputs must be new children of the selected runs directory. These options do not start any work by themselves, and private configuration should stay outside Git.
 
 ## BrowseComp-Plus input preparation
 

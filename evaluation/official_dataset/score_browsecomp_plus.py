@@ -20,8 +20,8 @@ PIN = "046949032b0328319cc9a02663a759ec601d9402"
 def check_source(source):
     def git(*args):
         return subprocess.run(["git", "-C", str(source), *args], capture_output=True, text=True, check=True).stdout.strip()
-    if git("rev-parse", "HEAD") != PIN or git("status", "--porcelain", "--untracked-files=no"):
-        raise ValueError("author checkout has wrong revision or modified tracked files")
+    if git("rev-parse", "HEAD") != PIN or git("status", "--porcelain", "--untracked-files=all", "--ignored=matching"):
+        raise ValueError("author checkout has wrong revision or modified, untracked, or ignored files")
 
 
 def find_verdict(scores_dir, qid):
@@ -82,7 +82,8 @@ def main():
     exit_code, launch_error = None, None
     with (args.out / "author.log").open("w", encoding="utf-8") as log:
         try:
-            proc = subprocess.run(cmd, cwd=source, stdout=log, stderr=subprocess.STDOUT, check=False)
+            proc = subprocess.run(cmd, cwd=source, stdout=log, stderr=subprocess.STDOUT, check=False,
+                                  env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
             exit_code = proc.returncode
         except OSError as error:
             # Exception details can contain paths or credentials; preserve its type only.

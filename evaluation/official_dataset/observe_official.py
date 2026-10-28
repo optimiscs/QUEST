@@ -8,17 +8,18 @@ import sys
 import threading
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "inference"))
+from trace_writer import TraceWriter
+sys.path.pop(0)
+
 log = Path(sys.argv[1])
 args = sys.argv[2:]
 secret_values = [v for k, v in os.environ.items() if ('KEY' in k or 'TOKEN' in k) and len(v) >= 16]
-lock = threading.Lock()
+writer = TraceWriter(log, secret_values)
 active = {}
 
 def write(item):
-    line = json.dumps(item, ensure_ascii=False, default=str)
-    for secret in secret_values: line = line.replace(secret, '[REDACTED]')
-    with lock:
-        with log.open('a') as f: f.write(line + '\n')
+    writer.write(item)
 
 def observe(frame, event, arg):
     if event not in ('call', 'return'): return

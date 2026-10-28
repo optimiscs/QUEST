@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import uuid
+from trace_writer import TraceWriter
 
 MAP = {
     'react_agent.py': {'_run': 'task', 'call_server': 'policy_model', 'custom_call_tool': 'tool', '_call_condenser_directly': 'automatic_memory'},
@@ -55,24 +56,16 @@ class Observer:
     def __init__(self, source, events):
         self.source = source.resolve()
         self.events = events
-        self.lock = threading.Lock()
         self.active = {}
         self.stacks = {}
         self.code_cache = {}
+        self.seen_kinds = set()
         self.secrets = [v for k,v in os.environ.items() if any(x in k.upper() for x in ('KEY','TOKEN','SECRET','PASSWORD')) and len(v) >= 8]
-        self.events.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self.events, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
-        os.close(fd)
+        self.writer = TraceWriter(self.events, self.secrets)
 
     def write(self, record):
         record.update(epoch=time.time(), thread_id=threading.get_ident())
-        line=json.dumps(record, ensure_ascii=False, default=str)
-        for secret in self.secrets:
-            line=line.replace(secret, '[REDACTED]')
-        with self.lock:
-            fd=os.open(self.events, os.O_APPEND | os.O_WRONLY)
-            try: os.write(fd, (line+'\n').encode())
-            finally: os.close(fd)
+        self.writer.write(record)
 
     def observe(self, frame, event, arg):
         if event not in ('call','return'):
@@ -91,6 +84,7 @@ class Observer:
                 return
             tid=threading.get_ident(); key=(tid,id(frame))
             if event=='call':
+                self.seen_kinds.add(kind)
                 ident=uuid.uuid4().hex
                 stack=self.stacks.setdefault(tid,[])
                 parent=stack[-1] if stack else None
@@ -137,5 +131,7 @@ def main():
         raise
     finally:
         sys.setprofile(None);threading.setprofile(None)
+        observer.write({'event':'coverage', 'observed_kinds':sorted(observer.seen_kinds),
+                        'configured_kinds':sorted({kind for functions in MAP.values() for kind in functions.values()})})
 
 if __name__=='__main__':main()

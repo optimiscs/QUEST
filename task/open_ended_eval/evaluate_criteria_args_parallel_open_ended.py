@@ -1,3 +1,7 @@
+import sys as _quest_options_sys
+from pathlib import Path as _QuestOptionsPath
+_quest_options_sys.path.insert(0, str(_QuestOptionsPath(__file__).resolve().parents[1]))
+from contrib.deepseek_data.request_options import reasoning_options
 import json
 import os
 import re
@@ -95,7 +99,7 @@ class AIClient():
                 model=self.model,
                 messages=msgs,
                 temperature=0.6,
-                **({"extra_body": {"thinking": {"type": "disabled"}}} if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" else {}),
+                **reasoning_options({}),
             )
             content = response.choices[0].message.content
             if content and content.strip():

@@ -486,6 +486,8 @@ class MultiTurnReactAgent(FnCallAgent):
             # Build trajectory data(the version containing prev_state)
             trajectory_data = {
                 "question": tl.current_question,
+                "iter": tl.current_rollout,
+                "task_id": tl.current_task_id,
                 "is_final": is_final,
                 "condenser_update_id": tl.trajectory_update_count if not is_final else None,
                 "condenser_call_id": tl.condenser_call_count if not is_final else None,
@@ -513,6 +515,8 @@ class MultiTurnReactAgent(FnCallAgent):
                     messages_no_memory = self._remove_prev_state_from_messages(full_msgs)
                 trajectory_data_no_memory = {
                     "question": tl.current_question,
+                    "iter": tl.current_rollout,
+                    "task_id": tl.current_task_id,
                     "is_final": is_final,
                     "condenser_update_id": tl.trajectory_update_count if not is_final else None,
                     "condenser_call_id": tl.condenser_call_count if not is_final else None,
@@ -1118,6 +1122,8 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
         # Save the current question for trajectory persistence(thread-local)
         tl.current_question = question
+        tl.current_rollout = data.get("rollout_idx")
+        tl.current_task_id = data.get("task_id")
         
         # Create a unified log directory for the current task
         # Prefer filename, then task_id, and finally a hash of the question

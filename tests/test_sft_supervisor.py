@@ -69,3 +69,11 @@ class SupervisorTests(unittest.TestCase):
    cmd=[sys.executable,str(FILE),'--config',str(cfg),'--state-dir',str(state),'--env-dir',str(env),'--llamafactory',str(source),'--resource-tb',str(root/'tb')]
    r=subprocess.run(cmd,capture_output=True,text=True);self.assertNotEqual(r.returncode,0);self.assertIn('PAUSE/STOP',r.stderr);self.assertFalse(sentinel.exists())
 if __name__=='__main__':unittest.main()
+
+def test_missing_gpu_monitor_is_recorded_and_does_not_raise():
+ from unittest.mock import patch
+ receipt = {}
+ with patch.object(m.subprocess, 'Popen', side_effect=FileNotFoundError('nvidia-smi')):
+  assert m.start_gpu_monitor(None, receipt) is None
+ assert receipt['gpu_monitor'] == 'unavailable'
+ assert 'nvidia-smi' in receipt['gpu_monitor_error']

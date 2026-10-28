@@ -12,6 +12,17 @@ if os.environ.get('QUEST_KEY_ROTATION') == '1' and os.environ.get('QUEST_KEY_ROT
     import fcntl
     import http.client
     import requests
+    import inspect
+
+    def require_signature(function, *args, **kwargs):
+        try:
+            inspect.signature(function).bind(*args, **kwargs)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError('Unsupported HTTP client signature for key rotation') from exc
+
+    require_signature(requests.sessions.Session.request, None, 'GET', 'https://example.invalid', headers={})
+    require_signature(http.client.HTTPSConnection.request, None, 'POST', '/', None, {}, encode_chunked=False)
+    require_signature(http.client.HTTPSConnection.getresponse, None)
 
     repo = Path(__file__).resolve().parents[2]
     workspace = repo / 'workspace'

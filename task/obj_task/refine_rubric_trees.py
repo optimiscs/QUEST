@@ -1,3 +1,7 @@
+import sys as _quest_options_sys
+from pathlib import Path as _QuestOptionsPath
+_quest_options_sys.path.insert(0, str(_QuestOptionsPath(__file__).resolve().parents[1]))
+from contrib.deepseek_data.request_options import reasoning_options
 #!/usr/bin/env python3
 import argparse
 import asyncio
@@ -52,7 +56,7 @@ def build_litellm_kwargs(model_name: str, messages: list, max_tokens: int, tempe
         "max_tokens": max_tokens,
         "temperature": temperature,
         "num_retries": 3,
-        **({"extra_body": {"thinking": {"type": "disabled"}}} if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1" else {"reasoning_effort": os.environ.get("REFINE_REASONING_EFFORT", "high")}),
+        **reasoning_options({"reasoning_effort": os.environ.get("REFINE_REASONING_EFFORT", "high")}),
     }
 
     api_base = os.environ.get("REFINE_API_BASE") or os.environ.get("FILTER_API_BASE")
