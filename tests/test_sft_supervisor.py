@@ -20,6 +20,25 @@ class SupervisorTests(unittest.TestCase):
    with self.assertRaisesRegex(ValueError,'disagree'):m.latest_checkpoint(root,4)
    (c/'trainer_state.json').write_text('{"global_step": 50, "max_steps":50}')
    with self.assertRaisesRegex(ValueError,'max_steps'):m.latest_checkpoint(root,4)
+ def test_same_output_cannot_be_locked_twice(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);output=root/'output'
+   with m.output_lock(output):
+    with self.assertRaises(BlockingIOError):
+     with m.output_lock(output):pass
+    with m.output_lock(root/'other-output'):pass
+   with m.output_lock(output):pass
+ def test_child_retains_output_lock_if_launcher_exits(self):
+  with tempfile.TemporaryDirectory() as d:
+   output=Path(d)/'output'
+   with m.output_lock(output) as (_,fd):
+    child=subprocess.Popen([sys.executable,'-c','import sys;sys.stdin.read()'],stdin=subprocess.PIPE,pass_fds=(fd,))
+   try:
+    with self.assertRaises(BlockingIOError):
+     with m.output_lock(output):pass
+   finally:
+    child.stdin.close();child.wait(timeout=10)
+   with m.output_lock(output):pass
  def test_pause_prevents_launch(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);env=root/'env';(env/'bin').mkdir(parents=True);source=root/'source';source.mkdir();state=root/'state';state.mkdir();(state/'PAUSE').touch()

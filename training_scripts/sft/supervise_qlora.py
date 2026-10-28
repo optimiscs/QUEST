@@ -5,6 +5,8 @@ This is an opt-in launcher, not a scheduler. It performs no automatic retries.
 Use a dedicated output directory and keep every attempt's log and checkpoints.
 """
 import argparse
+import contextlib
+import hashlib
 import fcntl
 import json
 import os
@@ -14,6 +16,22 @@ import subprocess
 import time
 import yaml
 from safetensors import safe_open
+
+
+
+@contextlib.contextmanager
+def output_lock(output):
+    """Coordinate launchers using the same resolved output, regardless of state dir."""
+    output = output.resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(os.fsencode(str(output))).hexdigest()
+    path = output.parent / ('.quest-sft-output-' + digest + '.lock')
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield path, fd
+    finally:
+        os.close(fd)
 
 
 def latest_checkpoint(output, ranks):
@@ -55,7 +73,7 @@ def main():
     output=Path(settings['output_dir']).expanduser().resolve()
     if settings.get('deepspeed'):raise ValueError('checkpoint inspection currently supports non-ZeRO LoRA only')
     if settings.get('resume_from_checkpoint'):raise ValueError('remove manual resume_from_checkpoint; this launcher chooses the latest verified checkpoint')
-    with (state_dir/'training.lock').open('a') as lock:
+    with (state_dir/'training.lock').open('a') as lock, output_lock(output) as output_guard:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if any((state_dir/x).exists() for x in ('PAUSE','STOP')):raise SystemExit('PAUSE/STOP marker exists')
         if (state_dir/'success.json').exists():raise SystemExit('Run already completed')
@@ -81,7 +99,7 @@ def main():
         try:
             with (attempt_dir/'gpu-memory.csv').open('w') as gpu,(attempt_dir/'train.log').open('w') as log:
                 monitor=subprocess.Popen(['nvidia-smi','--query-gpu=timestamp,index,memory.used,memory.total,utilization.gpu','--format=csv','-lms','1000'],stdout=gpu,stderr=subprocess.STDOUT)
-                child=subprocess.Popen(command,cwd=source,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+                child=subprocess.Popen(command,cwd=source,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True,pass_fds=(output_guard[1],))
                 if received and child.poll() is None:os.killpg(child.pid,received[-1])
                 receipt['torchrun_pid']=child.pid
                 (attempt_dir/'launch.json').write_text(json.dumps(receipt,indent=2)+'\n')
