@@ -436,9 +436,10 @@
   function updateWorkspaceLinks() {
     if (!dom.workspaceMenu) return;
     const hash = nowHash();
+    const query = window.location.search;
     const hrefs = siteLocale === "zh"
-      ? { en: `../${hash}`, zh: `./${hash}` }
-      : { en: `./${hash}`, zh: `trace-viewer-zh/${hash}` };
+      ? { en: `../${query}${hash}`, zh: `./${query}${hash}` }
+      : { en: `./${query}${hash}`, zh: `trace-viewer-zh/${query}${hash}` };
     $$("[data-site-option]", dom.workspaceMenu).forEach((option) => {
       const optionSite = option.dataset.siteOption;
       option.href = hrefs[optionSite] || "#";
