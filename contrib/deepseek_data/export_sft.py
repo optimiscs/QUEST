@@ -14,6 +14,9 @@ for no,line in enumerate(ledger.read_text().splitlines(),1):
   if identity in seen_rollouts: raise ValueError(f"duplicate task/rollout in ledger at line {no}")
   seen_rollouts.add(identity)
  if threshold is None or rec.get("score_status")!="scored" or not isinstance(score,(int,float)) or isinstance(score,bool) or not (0 <= score <= 1) or score < threshold: reason="not_scored_or_below_threshold"
+ # No trusted objective-verifier execution/provenance contract exists yet.
+ # A caller-supplied score or a structural summary is not acceptance evidence.
+ if not reason and kind == "objective": reason="objective_verifier_unverified"
  path=(ledger.parent/rec.get("sessions_path","")).resolve()
  if not reason and (not path.is_file() or not rec.get("task_id") or not rec.get("rollout_id")): reason="missing_sessions_or_provenance"
  if not reason and kind == "openended":

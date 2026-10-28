@@ -13,7 +13,9 @@ class SafetyTests(unittest.TestCase):
    rows=[{"task_id":"a","rollout_id":"1","kind":"objective","score_status":"scored","score":1,"sessions_path":"sessions.jsonl"},{"task_id":"b","rollout_id":"1","kind":"openended","score_status":"provisional_reference","score":0.99,"sessions_path":"sessions.jsonl"},{"task_id":"c","rollout_id":"1","kind":"openended","score_status":"scored","score":0.25,"sessions_path":"sessions.jsonl"}]
    (p/"ledger.jsonl").write_text("\n".join(map(json.dumps,rows))+"\n")
    subprocess.run([sys.executable,str(ADAPTER/"export_sft.py"),"--ledger",str(p/"ledger.jsonl"),"--output",str(p/"out.json"),"--manifest",str(p/"manifest.json")],check=True,capture_output=True)
-   self.assertEqual(len(json.loads((p/"out.json").read_text())),1);self.assertEqual(len(json.loads((p/"manifest.json").read_text())["decisions"]),3)
+   self.assertEqual(json.loads((p/"out.json").read_text()),[])
+   decisions=json.loads((p/"manifest.json").read_text())["decisions"]
+   self.assertEqual([x["excluded_reason"] for x in decisions],["objective_verifier_unverified","not_scored_or_below_threshold","not_scored_or_below_threshold"])
  def test_duplicate_rollout_is_rejected_before_export(self):
   with tempfile.TemporaryDirectory() as d:
    p=Path(d);(p/"sessions.jsonl").write_text(json.dumps({"messages":[{"role":"user","content":"q"},{"role":"assistant","content":"a"}]})+"\n")

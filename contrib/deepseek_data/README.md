@@ -9,3 +9,5 @@ The experiment that informed these adapters rejected two objective tasks and ret
 Old score status files that lack an output hash cannot establish that the scored output was unchanged and are rejected by the ledger. They remain untouched historical evidence; do not fabricate a score-time hash after the fact.
 
 `continue_reference.py` makes the historical tool-budget continuation reusable with explicit input and new trace/output paths. It records the source hash, request and response in private files, requires an untruncated response, and labels the resulting reference provisional. It is not an independent completed agent run; the ledger rejects attempts to declare such a continuation independent. This command calls the model only when explicitly invoked; it does not establish factual correctness.
+
+Objective rows are excluded from this experimental exporter even if a caller supplies a perfect score: a verified execution, rubric coverage and provenance contract has not yet been established. The manifest records `objective_verifier_unverified`; historic results and the official released SFT data are unaffected.
