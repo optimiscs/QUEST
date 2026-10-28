@@ -9,8 +9,9 @@
 | Jina / Serper 密钥轮换 | `inference/key_rotation/` | 可配置路径、跨进程锁及状态；只在无效凭据或明确额度耗尽时切换。密钥、状态和日志不纳入仓库。 |
 | GAIA 作者评分与格式提示 | `evaluation/official_dataset/gaia.py`, `run_gaia_prompt.py` | 导入固定作者评分器；可选生成格式提示须显式开启。分数、旧提示设置和污染审计保持分开。 |
 | 其他作者评分入口 | `evaluation/official_dataset/run.py` | 使用固定版本源码执行 DeepResearch Bench；对 BrowseComp/HLE 已知不兼容保持失败语义。不是所有数据集都已集成或验证。 |
+| BrowseComp-Plus 评分输入与预检 | `evaluation/official_dataset/prepare_browsecomp_plus.py`, `preflight_browsecomp_plus.py` | 从显式轨迹和搜索事件生成作者格式输入；预检题号、参考题目、答案与 qrel，避免作者评分器缺证据时除零。只做准备和检查，不执行评分、不证明检索完整或结果无污染。 |
 | 客观题结果结构审计 | `task/obj_eval/summary_audit.py` | 不运行生成代码，只检查既有评分树的结构和完整分一致性；不证明来源或沙箱安全，也不会批准数据进入训练。 |
-| 作者评分兼容补丁 | `evaluation/official_dataset/compat/` | 保存 BrowseComp、HLE、WideSearch、Mind2Web-2、LiveResearchBench 的五份适配补丁及固定版本生成入口；仅创建独立副本，不修改作者源码或自动评分。截图切分和模型替换等差异需明确报告。 |
+| 作者评分兼容补丁 | `evaluation/official_dataset/compat/` | 保存 BrowseComp、HLE、WideSearch、Mind2Web-2、LiveResearchBench 的五份适配补丁，可从固定版本生成独立副本并重新构建比对。仅做源码准备与校验，不自动评分；截图切分和模型替换等差异需明确报告。 |
 | DeepSeek 数据管线实验适配 | `contrib/deepseek_data/`, `task/` | 通过开关兼容 API、工具调用及开放题评分/导出；共用 DSML 解析并保留工具调用以外的文本。开放题评分到台账及导出已用合成输入验证；客观验证器执行、反馈重试、引用回填和真实端到端数据生成仍未完成验证，不应当作生产就绪。 |
 | 摘要 JSON 格式重试 | `inference/summary_utils.py`, `tool_visit.py` | 缓存和非缓存读页都检查每次格式重试结果；未能解析的不写入成功缓存；`VISIT_MAX_CONTENT_TOKENS` 限制长网页文本，默认保持 95000。使用 cl100k 计数，与模型实际 tokenizer 可能不同。 |
 | 本地模型路由与 few-shot | `inference/local_model_gateway.py`, `inference/prompts/visit_fewshot_3.json` | 分离主模型和摘要/记忆请求，辅助模型多实例按当前网关在途请求数分配；仅摘要插入样例，支持仅关闭辅助 thinking。需显式启动并配置模型服务；不支持流式响应。网关计数不等于 vLLM 内部队列长度。 |
