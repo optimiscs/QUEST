@@ -7,3 +7,5 @@ Opt in with `QUEST_DEEPSEEK_COMPAT=1` for DeepSeek request parameters and DSML n
 The experiment that informed these adapters rejected two objective tasks and retained zero SFT sessions. A reference-agent failure previously yielded a misleading score; failed or missing reference results must never be used as training acceptance.
 
 Old score status files that lack an output hash cannot establish that the scored output was unchanged and are rejected by the ledger. They remain untouched historical evidence; do not fabricate a score-time hash after the fact.
+
+`continue_reference.py` makes the historical tool-budget continuation reusable with explicit input and new trace/output paths. It records the source hash, request and response in private files, requires an untruncated response, and labels the resulting reference provisional. It is not an independent completed agent run; the ledger rejects attempts to declare such a continuation independent. This command calls the model only when explicitly invoked; it does not establish factual correctness.

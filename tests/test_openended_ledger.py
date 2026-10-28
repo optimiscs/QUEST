@@ -48,6 +48,10 @@ class LedgerTests(unittest.TestCase):
    result,out=run_export(name);self.assertNotEqual(result.returncode,0,name);self.assertFalse(out.exists());file.write_text(original)
   status=self.score.with_suffix('.status.json');status.write_text(status.read_text()+' ')
   result,out=run_export('status');self.assertNotEqual(result.returncode,0);self.assertFalse(out.exists())
+ def test_continued_reference_cannot_be_declared_independent(self):
+  ref=json.loads(self.reference.read_text());ref['reference_kind']='provisional_continuation';ref['termination']='continuation_after_tool_limit'
+  self.reference.write_text(json.dumps(ref)+'\n');self.status['input_sha256']['reference']=self.sha(self.reference)
+  r=self.execute();self.assertNotEqual(r.returncode,0);self.assertFalse(self.out.exists())
  def test_complete_aligned_inputs_are_accepted(self):
   r=self.execute();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(self.out.read_text())['score_status'],'scored')
 if __name__=='__main__':unittest.main()

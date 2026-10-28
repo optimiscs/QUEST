@@ -8,6 +8,8 @@ x=s[0];q=c[0].get("question","");sc=x.get("final_score");candidate_iter=c[0].get
 refs=[json.loads(x) for x in paths["reference"].read_text().splitlines() if x.strip()]
 if len(refs)!=1: raise ValueError("expected one reference")
 ref=refs[0]; text=ref.get("prediction",ref.get("answer","")); termination=str(ref.get("termination","")).lower()
+if a.reference_kind == "independent_agent" and (ref.get("reference_kind") == "provisional_continuation" or termination == "continuation_after_tool_limit"):
+ raise ValueError("continued reference is provisional; cannot declare it independent")
 if not isinstance(text,str) or len(text.strip())<100 or "answer not found" in text.lower() or "answer not found" in termination or "timeout" in termination: raise ValueError("reference incomplete; no score may be accepted")
 status_path=paths["score"].with_suffix(".status.json")
 status=json.loads(status_path.read_text())
