@@ -16,7 +16,7 @@
 | 本地模型路由与 few-shot | `inference/local_model_gateway.py`, `inference/prompts/visit_fewshot_3.json` | 分离主模型和摘要/记忆请求，辅助模型多实例按当前网关在途请求数分配；仅摘要插入样例，支持仅关闭辅助 thinking。需显式启动并配置模型服务；不支持流式响应。网关计数不等于 vLLM 内部队列长度。 |
 | 阶段观察 | `inference/observe.py` | 可选记录模型、搜索、网页读取、摘要、记忆和工具调用的开始/结束事件及耗时。完整请求/响应可能包含敏感内容，保存到私有目录；观察覆盖以实际函数映射为准，不等于所有外部调用都已自动记录。 |
 | 轨迹工作区 | `web/` | 中英文页面、数据集切换、轨迹和时间线；`web/build_gaia.py` 可从现有跨度构建新视图，页面每 5 秒检查当前数据；已终止任务通过工作区元数据单独标记，原始轨迹和评分不变。历史数据及运行日志不提交。 |
-| SFT 安全续训与监控 | `training_scripts/sft/supervise_qlora.py`, `observe_training.py` | 显式启动时检查最新非 ZeRO LoRA checkpoint、各 rank RNG、暂停标记与进程锁，保留每次尝试日志、显存及 TensorBoard 数据；另提供可选的有界重试入口。当前已离线测试，重构版尚未再次实训。 |
+| SFT 安全续训与监控 | `training_scripts/sft/supervise_qlora.py`, `observe_training.py`, `status_qlora.py` | 显式启动时检查最新非 ZeRO LoRA checkpoint、各 rank RNG、暂停标记与进程锁，保留每次尝试日志、显存及 TensorBoard 数据；另提供可选的有界重试入口。当前已离线测试，重构版尚未再次实训。 |
 | 64K QLoRA 配置样例 | `training_scripts/sft/examples/qlora64k_10pct.yaml` | 按已运行的四卡 10% 配置整理；路径是占位符，需要明确替换。使用独立 LlamaFactory v0.9.5，官方子模块版本不同。配置文件本身不会启动训练。 |
 
 ## 目录与安全边界
@@ -95,3 +95,20 @@ preserves separate attempt logs and an append-only failure history; a process
 that bypasses the supervisor is outside its locking guarantees. Only mocked
 processes and synthetic checkpoints have been tested. Do not use the wrapper as
 evidence that a real resumed distributed training run has been validated.
+
+
+### Read-only SFT status
+
+`training_scripts/sft/status_qlora.py --state-dir STATE --output-dir OUTPUT`
+reads an explicitly selected or latest attempt, its rank-0 status and exit
+receipt, checkpoint names, sampled GPU peaks, and recent same-attempt step-end
+timing. Add `--tensorboard-dir RUN_DIR` to read the four native scalar tags
+with an environment containing TensorBoard. It never starts or resumes training.
+Non-finite values are reported as strings with their JSON paths in
+`nonfinite_fields`; missing data remains unknown.
+
+The GPU value is a sampled peak, checkpoint names do not establish integrity,
+and saved status is not a live PID check. Any ETA is a conditional projection
+from recent recorded step-end intervals; future evaluation and save costs can
+differ. It does not replace the former scheduled anomaly investigation or data
+quality workflow.
