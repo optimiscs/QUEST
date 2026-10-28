@@ -146,6 +146,7 @@ def main(argv=None, runner=None):
         snapshots[name]=snapshot
     # Validate exactly the bytes that the evaluator will read.
     expected=validate_inputs(read_jsonl(snapshots['criteria']),read_jsonl(snapshots['candidate']),read_jsonl(snapshots['reference']))
+    input_hashes={k:sha(snapshots[k]) for k in ('criteria','candidate','reference')}
     script=ROOT/'task/open_ended_eval/evaluate_criteria_args_parallel_open_ended.py'
     cmd=[sys.executable,str(script),'--model','deepseek-flash','--prompt_to_eval',str(snapshots['criteria']),
          '--answer_to_eval',str(snapshots['candidate']),'--ref_to_eval',str(snapshots['reference']),
@@ -166,11 +167,16 @@ def main(argv=None, runner=None):
         try:
             rows=read_jsonl(paths['out']);valid=validate_results(rows,expected)
         except (ValueError,OSError):error_type=error_type or 'InvalidScoreOutput'
+    try:
+        input_hashes_after={k:sha(snapshots[k]) for k in input_hashes}
+    except OSError:
+        input_hashes_after=None
+    if input_hashes_after != input_hashes:error_type='InputSnapshotChanged'
     if exit_code==0 and not valid and error_type is None:error_type='ResultCoverageMismatch'
     complete=exit_code==0 and valid and error_type is None
     meta={'exit_code':exit_code,'error_type':error_type,'result_rows':len(rows),
           'valid_scores':len(rows) if valid else 0,'expected_scores':len(expected),'complete':complete,
-          'input_sha256':{k:sha(snapshots[k]) for k in ('criteria','candidate','reference')},
+          'input_sha256':input_hashes, 'input_sha256_after':input_hashes_after,
           'input_snapshots':{k:str(snapshots[k]) for k in ('criteria','candidate','reference')},
           'output_sha256':sha(paths['out']) if paths['out'].is_file() else None}
     fd=os.open(status,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)

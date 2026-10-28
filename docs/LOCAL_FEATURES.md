@@ -63,3 +63,5 @@ export MEMORY_LOCAL_MODEL_NAME=QWEN38-MEMORY
 ### SFT 启动与验证边界
 
 `supervise_qlora.py --help` 展示显式配置、LlamaFactory 环境、源码、独立状态目录、TensorBoard 路径及 GPU 数量。该入口仅支持已保存 adapter、optimizer、scheduler、trainer state 和对应 rank RNG 的非 ZeRO LoRA 检查点；损坏或不完整的最新检查点会停止，而不是擅自回退。`PAUSE` 或 `STOP` 标记会阻止启动，完成标记会阻止重复启动。检测 adapter 的结构、配置 JSON 和各状态文件是否非空，不意味着已证明所有 optimizer 张量无损。新的每 rank hooks 和监听脚本是对旧实验版本的整理：已使用模拟 checkpoint、暂停标记及真实已完成 checkpoint 做离线验证；尚未在新入口实际训练。
+
+开放题导出会核对评分输出、评分状态、候选答案、参考答案和轨迹文件的 SHA-256；缺少哈希的旧台账需重新生成，任何文件变化都会拒绝导出。评分时也检查输入快照前后是否变化。哈希只证明文件一致，不能证明轨迹与答案的语义关联或参考答案独立性；客观题验证器及真实端到端链路仍需另行验证。

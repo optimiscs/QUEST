@@ -34,6 +34,20 @@ class LedgerTests(unittest.TestCase):
   row=json.loads(self.candidate.read_text());row.pop('iter');self.candidate.write_text(json.dumps(row)+'\n');self.status['input_sha256']['candidate']=self.sha(self.candidate)
   score=json.loads(self.score.read_text());score['iter']=None;self.score.write_text(json.dumps(score)+'\n');self.status['output_sha256']=self.sha(self.score)
   r=self.execute();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(self.out.read_text())['rollout_id'],'1')
+ def test_export_requires_unchanged_scoring_evidence(self):
+  r=self.execute();self.assertEqual(r.returncode,0,r.stderr)
+  exporter=ROOT/'contrib/deepseek_data/export_sft.py'
+  def run_export(suffix):
+   out=self.p/('out'+suffix+'.json');manifest=self.p/('manifest'+suffix+'.json')
+   result=subprocess.run([sys.executable,str(exporter),'--ledger',str(self.out),'--output',str(out),'--manifest',str(manifest)],capture_output=True,text=True)
+   return result,out
+  result,out=run_export('valid');self.assertEqual(result.returncode,0,result.stderr);self.assertTrue(out.exists())
+  for name in ('sessions','candidate','reference','score'):
+   file=getattr(self,name);original=file.read_text()
+   file.write_text(original+' ')
+   result,out=run_export(name);self.assertNotEqual(result.returncode,0,name);self.assertFalse(out.exists());file.write_text(original)
+  status=self.score.with_suffix('.status.json');status.write_text(status.read_text()+' ')
+  result,out=run_export('status');self.assertNotEqual(result.returncode,0);self.assertFalse(out.exists())
  def test_complete_aligned_inputs_are_accepted(self):
   r=self.execute();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(json.loads(self.out.read_text())['score_status'],'scored')
 if __name__=='__main__':unittest.main()

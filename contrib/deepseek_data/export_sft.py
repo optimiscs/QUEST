@@ -16,6 +16,14 @@ for no,line in enumerate(ledger.read_text().splitlines(),1):
  if threshold is None or rec.get("score_status")!="scored" or not isinstance(score,(int,float)) or isinstance(score,bool) or not (0 <= score <= 1) or score < threshold: reason="not_scored_or_below_threshold"
  path=(ledger.parent/rec.get("sessions_path","")).resolve()
  if not reason and (not path.is_file() or not rec.get("task_id") or not rec.get("rollout_id")): reason="missing_sessions_or_provenance"
+ if not reason and kind == "openended":
+  for role in ("sessions", "score", "candidate", "reference", "status"):
+   location=rec.get(role+"_path"); expected=rec.get(role+"_sha256")
+   if not isinstance(location,str) or not isinstance(expected,str):
+    raise ValueError(f"missing {role} provenance at ledger line {no}")
+   evidence=(ledger.parent/location).resolve()
+   if not evidence.is_file() or digest(evidence)!=expected:
+    raise ValueError(f"changed or missing {role} evidence at ledger line {no}")
  count=0
  if not reason:
   for snapshot in path.read_text().splitlines():

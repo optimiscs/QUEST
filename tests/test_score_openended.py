@@ -39,6 +39,14 @@ class ScoreSafetyTests(unittest.TestCase):
   self.assertEqual(self.call(fake),0);meta=json.loads(self.out.with_suffix('.status.json').read_text())
   self.assertEqual(meta['input_sha256']['candidate'],m.sha(Path(meta['input_snapshots']['candidate'])))
   self.assertNotEqual(meta['input_sha256']['candidate'],m.sha(self.p/'candidate'))
+ def test_modified_input_snapshot_is_failure(self):
+  def fake(cmd,**kw):
+   snapshot=Path(cmd[cmd.index('--answer_to_eval')+1]);snapshot.write_text('tampered')
+   self.out.write_text(json.dumps(self.good_result())+'\n');return SimpleNamespace(returncode=0)
+  self.assertEqual(self.call(fake),1)
+  meta=json.loads(self.out.with_suffix('.status.json').read_text())
+  self.assertFalse(meta['complete']);self.assertEqual(meta['error_type'],'InputSnapshotChanged')
+  self.assertNotEqual(meta['input_sha256']['candidate'],meta['input_sha256_after']['candidate'])
  def test_timeout_preserves_partial_result_and_failure(self):
   def fake(cmd,**kw):self.out.write_text('partial');raise subprocess.TimeoutExpired(cmd,1)
   self.assertEqual(self.call(fake),1);meta=json.loads(self.out.with_suffix('.status.json').read_text());self.assertFalse(meta['complete']);self.assertEqual(meta['error_type'],'TimeoutExpired');self.assertEqual(self.out.read_text(),'partial');self.assertTrue(meta['output_sha256'])
