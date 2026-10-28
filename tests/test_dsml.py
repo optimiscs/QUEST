@@ -11,6 +11,9 @@ class DSMLTests(unittest.TestCase):
  def test_malformed_preserved(self):
   raw='prefix <｜DSML｜invoke name="search"><bad>raw</bad></｜DSML｜invoke> suffix'
   self.assertEqual(mod.normalize_dsml(raw),raw)
+ def test_duplicate_parameters_are_not_silently_overwritten(self):
+  raw='<｜DSML｜invoke name="search"><｜DSML｜parameter name="query" string="true">first</｜DSML｜parameter><｜DSML｜parameter name="query" string="true">second</｜DSML｜parameter></｜DSML｜invoke>'
+  self.assertEqual(mod.normalize_dsml(raw),raw)
  def test_four_runtime_entrypoints_use_shared_adapter(self):
   for rel in ('inference/react_agent.py','task/obj_task/generation_agent.py','task/open_ended_task/generation_agent_longform.py','task/open_ended_task/ref_gen/react_agent_ref_gen.py'):
    tree=ast.parse((root/rel).read_text())

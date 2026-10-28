@@ -25,6 +25,9 @@ def normalize_dsml(content):
         name, body = match.groups()
         arguments = {}
         for key, attrs, raw in _PARAMETER.findall(body):
+            # Ambiguous duplicate arguments cannot be repaired safely.
+            if key in arguments:
+                return match.group(0)
             raw = raw.strip()
             if re.search(r'\bstring\s*=\s*"true"', attrs, re.I):
                 value = raw
