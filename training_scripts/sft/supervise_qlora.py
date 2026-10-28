@@ -34,6 +34,40 @@ def output_lock(output):
         os.close(fd)
 
 
+
+def validate_training_states(path, rng_files):
+    """Safely deserialize checkpoint state on CPU; reject unrecognized objects."""
+    import numpy as np
+    import torch
+    try:
+        from numpy._core.multiarray import _reconstruct
+    except ImportError:
+        from numpy.core.multiarray import _reconstruct
+    allowed = [_reconstruct, np.ndarray, np.dtype, type(np.dtype('uint32'))]
+    def load(name):
+        try:
+            with torch.serialization.safe_globals(allowed):
+                return torch.load(path / name, map_location='cpu', weights_only=True)
+        except Exception as exc:
+            raise ValueError('checkpoint state cannot be safely loaded: '+name) from exc
+    optim = load('optimizer.pt')
+    if not isinstance(optim, dict) or not isinstance(optim.get('state'), dict) or not isinstance(optim.get('param_groups'), list) or not optim['param_groups']:
+        raise ValueError('invalid optimizer state')
+    scheduler = load('scheduler.pt')
+    if not isinstance(scheduler, dict) or not isinstance(scheduler.get('last_epoch'), int) or isinstance(scheduler['last_epoch'], bool):
+        raise ValueError('invalid scheduler state')
+    for name in rng_files:
+        rng = load(name)
+        if not isinstance(rng, dict) or not {'python','numpy','cpu','cuda'}.issubset(rng):
+            raise ValueError('invalid RNG state: '+name)
+        if not isinstance(rng['python'], tuple) or not isinstance(rng['numpy'], tuple) or not torch.is_tensor(rng['cpu']) or rng['cpu'].numel()==0:
+            raise ValueError('invalid RNG state: '+name)
+        cuda = rng['cuda']
+        if not ((torch.is_tensor(cuda) and cuda.numel()>0) or
+                (isinstance(cuda, (list, tuple)) and cuda and all(torch.is_tensor(x) and x.numel()>0 for x in cuda))):
+            raise ValueError('invalid CUDA RNG state: '+name)
+
+
 def latest_checkpoint(output, ranks):
     """Find the newest fully saved adapter checkpoint or fail closed."""
     candidates=[]
@@ -51,6 +85,7 @@ def latest_checkpoint(output, ranks):
         if not adapter.keys():raise ValueError('adapter contains no tensors')
     state=json.loads((path/'trainer_state.json').read_text())
     if state.get('global_step')!=step:raise ValueError('checkpoint directory and trainer step disagree')
+    validate_training_states(path,rng)
     if isinstance(state.get('max_steps'),int) and step>=state['max_steps']:
         raise ValueError('checkpoint reached max_steps; inspect final evaluation and outputs before restart')
     return path

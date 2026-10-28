@@ -1,6 +1,7 @@
 import importlib.util,json,subprocess,sys,tempfile,unittest
 from pathlib import Path
 import numpy as np
+import torch
 from safetensors.numpy import save_file
 ROOT=Path(__file__).resolve().parents[1];FILE=ROOT/'training_scripts/sft/supervise_qlora.py';spec=importlib.util.spec_from_file_location('supervise_qlora',FILE);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class SupervisorTests(unittest.TestCase):
@@ -9,6 +10,11 @@ class SupervisorTests(unittest.TestCase):
   for n in ['adapter_model.safetensors','adapter_config.json','optimizer.pt','scheduler.pt',*[f'rng_state_{i}.pth' for i in range(ranks)]]:(p/n).write_text('x')
   save_file({'lora':np.array([1.0],dtype=np.float32)},str(p/'adapter_model.safetensors'))
   (p/'adapter_config.json').write_text('{}')
+  torch.save({'state':{},'param_groups':[{'params':[0]}]},p/'optimizer.pt')
+  torch.save({'last_epoch':step},p/'scheduler.pt')
+  for i in range(ranks):
+   torch.save({'python':(3,(),None),'numpy':('MT19937',np.array([1],dtype=np.uint32),0,0,0.0),
+               'cpu':torch.zeros(2,dtype=torch.uint8),'cuda':[torch.zeros(2,dtype=torch.uint8)]},p/f'rng_state_{i}.pth')
   (p/'trainer_state.json').write_text(json.dumps({'global_step':step,'max_steps':max_steps}));return p
  def test_checkpoint_integrity_and_completion(self):
   with tempfile.TemporaryDirectory() as d:
@@ -16,10 +22,19 @@ class SupervisorTests(unittest.TestCase):
    self.assertEqual(m.latest_checkpoint(root,4),c)
    (c/'rng_state_2.pth').unlink()
    with self.assertRaisesRegex(ValueError,'Incomplete'):m.latest_checkpoint(root,4)
-   (c/'rng_state_2.pth').write_text('x');(c/'trainer_state.json').write_text('{"global_step": 49, "max_steps":100}')
+   torch.save({'python':(3,(),None),'numpy':('MT19937',np.array([1],dtype=np.uint32),0,0,0.0),'cpu':torch.zeros(2,dtype=torch.uint8),'cuda':[torch.zeros(2,dtype=torch.uint8)]},c/'rng_state_2.pth');(c/'trainer_state.json').write_text('{"global_step": 49, "max_steps":100}')
    with self.assertRaisesRegex(ValueError,'disagree'):m.latest_checkpoint(root,4)
    (c/'trainer_state.json').write_text('{"global_step": 50, "max_steps":50}')
    with self.assertRaisesRegex(ValueError,'max_steps'):m.latest_checkpoint(root,4)
+ def test_nonempty_corrupt_optimizer_and_rng_are_rejected(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);c=self.make_checkpoint(root,50)
+   optimizer=(c/'optimizer.pt').read_bytes()
+   (c/'optimizer.pt').write_bytes(b'not-empty-but-invalid')
+   with self.assertRaisesRegex(ValueError,'safely loaded'):m.latest_checkpoint(root,4)
+   (c/'optimizer.pt').write_bytes(optimizer)
+   (c/'rng_state_1.pth').write_bytes(b'not-empty-but-invalid')
+   with self.assertRaisesRegex(ValueError,'safely loaded'):m.latest_checkpoint(root,4)
  def test_same_output_cannot_be_locked_twice(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);output=root/'output'
