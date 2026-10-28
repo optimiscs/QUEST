@@ -19,3 +19,12 @@ The command checks the commit and tracked-file status, exports only tracked sour
 | `liveresearchbench` | `ffb27c9d7a091a0b0f10cbcebc061fc3ba025b63` | Uses the authorized Full data and fixed local input, plus DeepSeek JSON/local schema validation. Data access and download are separate requirements. |
 
 The earlier runs were small integration checks, not aggregate benchmark results. Model substitutions, screenshot transformations, author metrics and unscored/failure states must remain explicit when reporting a new run. Historic outputs and requests are preserved under `workspace/strict-reproduction/`; they are not loaded by this materializer.
+
+To verify a copy before use without executing it:
+
+```bash
+workspace/env/bin/python evaluation/official_dataset/compat/materialize.py simple-evals \
+  --verify-only --output workspace/compat/simple-evals-new
+```
+
+The manifest records source file hashes and symlink targets, and verification rejects changed, missing or extra files. Old manifests lack an inventory and must be recreated for this check. This detects accidental drift relative to the local manifest; it does not authenticate a manifest that was itself replaced. Save the manifest hash separately when independent provenance is needed. Runtime caches or datasets should live outside the verified copy.

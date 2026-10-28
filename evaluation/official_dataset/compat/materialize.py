@@ -28,6 +28,52 @@ def git(*args, cwd=None, env=None):
     return subprocess.run(['git', *map(str,args)], cwd=cwd, env=env, text=True, capture_output=True, check=True)
 
 
+
+MANIFEST = 'QUEST_COMPAT_MANIFEST.json'
+
+
+def inventory(root):
+    """Hash file bytes and record symlink targets without following links."""
+    entries = {}
+    for directory, dirs, files in os.walk(root, followlinks=False):
+        directory = Path(directory)
+        for name in sorted(dirs + files):
+            path = directory / name
+            relative = path.relative_to(root).as_posix()
+            if relative == MANIFEST:
+                continue
+            if path.is_symlink():
+                entries[relative] = {'symlink': os.readlink(path)}
+            elif path.is_file():
+                entries[relative] = {'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+            elif not path.is_dir():
+                raise ValueError('unsupported file type: '+relative)
+    return entries
+
+
+def verify_materialized(name, output):
+    """Detect changes relative to the saved manifest; no network or evaluation."""
+    output = output.resolve(strict=True)
+    manifest_path = output / MANIFEST
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError('missing or unsafe compatibility manifest')
+    manifest = json.loads(manifest_path.read_text())
+    patch_digest = hashlib.sha256((PATCHES/(name+'-compat.patch')).read_bytes()).hexdigest()
+    if (manifest.get('upstream') != name or manifest.get('revision') != PINS[name]
+            or manifest.get('patch_sha256') != patch_digest
+            or manifest.get('source_modified') is not False or manifest.get('compat_copy') is not True):
+        raise ValueError('manifest does not match pinned source and patch')
+    recorded = manifest.get('files')
+    if not isinstance(recorded, dict):
+        raise ValueError('legacy manifest lacks file inventory; recreate compatibility copy')
+    actual = inventory(output)
+    if actual != recorded:
+        differences = sorted(k for k in actual.keys() | recorded.keys() if actual.get(k) != recorded.get(k))
+        raise ValueError('compatibility copy changed: '+', '.join(differences[:20]))
+    return {'output':str(output),'upstream':name,'revision':PINS[name],
+            'patch_sha256':patch_digest,'files_verified':len(actual)}
+
+
 def materialize(name, source, output):
     source=source.resolve(strict=True)
     output=output.absolute()
@@ -62,7 +108,7 @@ def materialize(name, source, output):
         env=dict(os.environ,GIT_CEILING_DIRECTORIES=str(output.parent.resolve()))
         git('apply','--check',patch,cwd=scratch,env=env)
         git('apply',patch,cwd=scratch,env=env)
-        (scratch/'QUEST_COMPAT_MANIFEST.json').write_text(json.dumps({'upstream':name,'revision':revision,'patch_sha256':digest,'source_modified':False,'compat_copy':True},indent=2)+'\n')
+        (scratch/MANIFEST).write_text(json.dumps({'upstream':name,'revision':revision,'patch_sha256':digest,'source_modified':False,'compat_copy':True,'files':inventory(scratch)},indent=2,sort_keys=True)+'\n')
         os.rename(scratch,output)
     except BaseException:
         shutil.rmtree(scratch,ignore_errors=True)
@@ -73,9 +119,16 @@ def materialize(name, source, output):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('benchmark',choices=PINS)
-    parser.add_argument('--source',type=Path,required=True,help='Clean checkout at pinned upstream commit')
+    parser.add_argument('--source',type=Path,help='Clean checkout at pinned upstream commit')
+    parser.add_argument('--verify-only',action='store_true',help='Verify a previously materialized copy without running it')
     parser.add_argument('--output',type=Path,required=True,help='Fresh output directory')
     args=parser.parse_args()
-    print(json.dumps(materialize(args.benchmark,args.source,args.output),indent=2))
+    if args.verify_only:
+        if args.source:parser.error('--source is not used with --verify-only')
+        result=verify_materialized(args.benchmark,args.output)
+    else:
+        if not args.source:parser.error('--source is required unless --verify-only is set')
+        result=materialize(args.benchmark,args.source,args.output)
+    print(json.dumps(result,indent=2))
 
 if __name__=='__main__':main()

@@ -14,6 +14,17 @@ class CompatTests(unittest.TestCase):
     result=m.materialize('fake',src,out)
     self.assertEqual((out/'file.txt').read_text(),'changed\n');self.assertEqual((src/'file.txt').read_text(),'original\n')
     self.assertFalse((out/'.git').exists());self.assertTrue(result['patch_sha256'])
+    self.assertEqual(m.verify_materialized('fake',out)['files_verified'],1)
+    (out/'file.txt').write_text('tampered\n')
+    with self.assertRaises(ValueError):m.verify_materialized('fake',out)
+    (out/'file.txt').write_text('changed\n')
+    (out/'extra.py').write_text('extra')
+    with self.assertRaises(ValueError):m.verify_materialized('fake',out)
+    (out/'extra.py').unlink()
+    manifest=out/m.MANIFEST
+    import json
+    old=json.loads(manifest.read_text());old.pop('files');manifest.write_text(json.dumps(old))
+    with self.assertRaises(ValueError):m.verify_materialized('fake',out)
     with self.assertRaises(FileExistsError):m.materialize('fake',src,out)
     (src/'file.txt').write_text('dirty\n')
     with self.assertRaises(ValueError):m.materialize('fake',src,root/'dirty')
