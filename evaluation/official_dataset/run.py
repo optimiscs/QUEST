@@ -37,9 +37,9 @@ def sha(path):
 def rows(path):
     return [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
 
-def verify_source(benchmark):
+def verify_source(benchmark, sources=SOURCES):
     directory, expected = PINS[benchmark]
-    root = SOURCES / directory
+    root = sources / directory
     actual = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
     status = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'], text=True).strip()
     if actual != expected or status:
@@ -66,15 +66,19 @@ def main():
     parser.add_argument('--query', type=Path, help='Matching subset of the official query.jsonl')
     parser.add_argument('--out', type=Path, help='Fresh, nonexistent run directory under the independent output root')
     parser.add_argument('--workers', type=int, default=1)
+    parser.add_argument('--sources-dir', type=Path, default=SOURCES, help='Directory containing pinned author checkouts')
+    parser.add_argument('--runs-dir', type=Path, default=HOME_DIR/'runs', help='Output root for new runs')
+    parser.add_argument('--api-config', type=Path, help='Private API configuration; overrides QUEST_EVAL_API_CONFIG')
     args = parser.parse_args()
-    source, revision = verify_source(args.benchmark)
+    source, revision = verify_source(args.benchmark, args.sources_dir.resolve())
+
     if args.benchmark == 'hle':
         raise SystemExit('BLOCKED: official HLE uses Pydantic json_schema response_format; DeepSeek returned HTTP 400. No fallback was substituted.')
     if args.benchmark == 'browsecomp':
         raise SystemExit('BLOCKED: pinned official BrowseComp returns regex group(0) but compares it with yes/no. Scores can be wrong; source retained without modification.')
     if not all((args.raw, args.query, args.out)) or args.workers < 1:
         parser.error('drbench needs --raw, --query, --out, and positive --workers')
-    allowed = (HOME_DIR / 'runs').resolve()
+    allowed = args.runs_dir.resolve()
     out = args.out.resolve()
     if out == allowed or not out.is_relative_to(allowed): raise ValueError('Output must be a new child of the isolated runs directory')
     raw, query = args.raw.resolve(strict=True), args.query.resolve(strict=True)
@@ -89,7 +93,7 @@ def main():
         q = selected.get(str(item.get('id')))
         if not q or item.get('prompt') != q.get('prompt') or not item.get('article'): raise ValueError('Raw records do not match official queries')
     if set(selected) != {str(x['id']) for x in records}: raise ValueError('Query/answer ID sets differ')
-    config_path = Path(os.environ.get('QUEST_EVAL_API_CONFIG', str(ROOT / 'strict-reproduction/.secrets/api_config.json')))
+    config_path = args.api_config or Path(os.environ.get('QUEST_EVAL_API_CONFIG', str(ROOT / 'strict-reproduction/.secrets/api_config.json')))
     config = json.loads(config_path.read_text())['common']
     model = config['JUDGE_MODEL_NAME'].split('/')[-1]
     out.mkdir(parents=True, exist_ok=False)

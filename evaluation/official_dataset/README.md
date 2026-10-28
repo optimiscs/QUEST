@@ -25,3 +25,7 @@ The raw rows must contain `id`, `prompt`, and `article`; query rows must be byte
 > The BrowseComp and HLE notes above describe this launcher and its original unmodified-source configuration. Later smoke experiments used separately stored, explicitly patched upstream copies and must not be interpreted as results from this launcher or as aggregate benchmark scores. No historical outputs are modified by this integration.
 
 For the later explicitly adapted benchmark copies, see [compat/README.md](compat/README.md). Those copies differ from the unmodified-source launcher described above.
+
+## Portable paths
+
+Both launchers keep the historical workspace paths as defaults. For a new installation, GAIA accepts `--source /path/to/gaia-leaderboard`; DRBench accepts `--sources-dir /path/to/author-checkouts`, `--runs-dir /path/to/new-runs`, and `--api-config /private/config.json`. The author checkouts must still match the pinned commits and have no modified tracked files; outputs must be new children of the selected runs directory. These options do not start any work by themselves, and private configuration should stay outside Git.

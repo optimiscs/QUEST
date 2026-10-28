@@ -20,9 +20,11 @@ def main():
     p.add_argument('--submission', type=Path, required=True, help='JSONL: task_id, model_answer; missing predictions must be omitted')
     p.add_argument('--reference', type=Path, required=True, help='Explicit JSON array of GAIA references: task_id, answer')
     p.add_argument('--out', type=Path, required=True, help='New output directory; never reused')
+    p.add_argument('--source', type=Path, default=SOURCE, help='Pinned GAIA leaderboard checkout')
     a = p.parse_args()
-    revision = subprocess.check_output(['git','-C',str(SOURCE),'rev-parse','HEAD'],text=True).strip()
-    status = subprocess.check_output(['git','-C',str(SOURCE),'status','--porcelain','--untracked-files=no'],text=True).strip()
+    source = a.source.resolve(strict=True)
+    revision = subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip()
+    status = subprocess.check_output(['git','-C',str(source),'status','--porcelain','--untracked-files=no'],text=True).strip()
     if revision != PIN or status: raise SystemExit('Official GAIA source mismatch or modified')
     submission, reference = a.submission.resolve(strict=True), a.reference.resolve(strict=True)
     predictions = load(submission)
@@ -38,7 +40,7 @@ def main():
         ident=row.get('task_id'); answer=row.get('model_answer')
         if not isinstance(ident,str) or ident in seen or ident not in refmap or not isinstance(answer,str) or not answer.strip(): raise ValueError('Invalid, missing, empty, unknown, or duplicate prediction')
         seen.add(ident)
-    spec=importlib.util.spec_from_file_location('gaia_official_scorer',SOURCE/'scorer.py')
+    spec=importlib.util.spec_from_file_location('gaia_official_scorer',source/'scorer.py')
     scorer=importlib.util.module_from_spec(spec); spec.loader.exec_module(scorer)
     a.out.mkdir(parents=True,exist_ok=False)
     results=[]
@@ -47,7 +49,7 @@ def main():
             ident=row['task_id']; outcome=bool(scorer.question_scorer(row['model_answer'],refmap[ident]))
             results.append({'task_id':ident,'model_answer':row['model_answer'],'correct':outcome})
     (a.out/'scores.jsonl').write_text(''.join(json.dumps(x,ensure_ascii=False)+'\n' for x in results))
-    manifest={'benchmark':'GAIA','method':'upstream question_scorer, normalized exact match','source_commit':PIN,'scorer_sha256':sha(SOURCE/'scorer.py'),'submission_sha256':sha(submission),'reference_sha256':sha(reference),'source_modified':False,'scored':len(results),'correct':sum(x['correct'] for x in results),'judge_model':None,'submission_path':str(submission),'reference_path':str(reference)}
+    manifest={'benchmark':'GAIA','method':'upstream question_scorer, normalized exact match','source_commit':PIN,'scorer_sha256':sha(source/'scorer.py'),'submission_sha256':sha(submission),'reference_sha256':sha(reference),'source_modified':False,'scored':len(results),'correct':sum(x['correct'] for x in results),'judge_model':None,'submission_path':str(submission),'reference_path':str(reference)}
     (a.out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     print(json.dumps(manifest,indent=2))
 if __name__ == '__main__': main()
