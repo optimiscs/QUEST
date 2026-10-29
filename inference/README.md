@@ -149,3 +149,12 @@ the same script with the same output and log paths.
 Add a dataset file that matches the input format expected by `run_multi_react.py`,
 then create or adapt a `scripts/run_react_infer_*.sh` launch script. Keep scoring and
 judge logic under [`../evaluation/`](../evaluation/).
+
+In native mode the policy-call limit includes the final response: up to three
+calls are reserved for final JSON and format correction. A 100-call budget
+therefore allows at most 97 research calls. Final generation disables tools and
+validates a JSON `answer` string before wrapping it in `<answer>` tags. The
+result's `policy_call_counts` reports research, final, correction, HTTP attempts
+and HTTP retries; SDK-level retries are disabled so attempts remain observable.
+A resumed run accounts for its recorded prior research rounds; prior HTTP
+attempts and any unrecorded final calls cannot be reconstructed.

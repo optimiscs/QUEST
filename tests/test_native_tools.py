@@ -81,7 +81,7 @@ def test_native_prompt_ignores_legacy_profile_and_disabled_tools(monkeypatch):
     assert [s['function']['name'] for s in native_tools.tool_schemas(reduced)] == ['search']
 
 
-def agent_with_api(monkeypatch, tmp_path, responses, max_rounds=5):
+def agent_with_api(monkeypatch, tmp_path, responses, max_rounds=7):
     monkeypatch.setenv('QUEST_NATIVE_TOOL_CALLS', 'true')
     monkeypatch.delenv('QUEST_DEEPSEEK_TEACHER', raising=False)
     monkeypatch.setenv('MEMORY_ENABLED', 'false')
@@ -108,6 +108,7 @@ def test_three_tools_native_api_history_and_final_answer(monkeypatch, tmp_path):
         reply('visit', '{"url":["https://example.com"],"goal":"facts"}', call_id='v'),
         reply('PythonInterpreter', '{"code":"print(1 + 1)"}', call_id='p'),
         reply(content='<answer>2</answer>', finish='stop'),
+        reply(content='{"answer":"2"}', finish='stop'),
     ]
     agent, requests = agent_with_api(monkeypatch, tmp_path, responses)
     executed = []
@@ -116,15 +117,16 @@ def test_three_tools_native_api_history_and_final_answer(monkeypatch, tmp_path):
     assert result['prediction'] == '2'
     assert [n for n, _ in executed] == ['search', 'visit', 'PythonInterpreter']
     assert [m['tool_call_id'] for m in result['messages'] if m['role'] == 'tool'] == ['s', 'v', 'p']
-    assert requests[-1]['messages'][-1]['role'] == 'tool'
-    assert all(r['tool_choice'] == 'auto' and r['parallel_tool_calls'] is False and 'stop' not in r for r in requests)
+    assert any(m['role'] == 'tool' for m in requests[-1]['messages'])
+    assert all(r['tool_choice'] == 'auto' and r['parallel_tool_calls'] is False and 'stop' not in r for r in requests[:-1])
+    assert requests[-1]['tool_choice'] == 'none'
     assert all(s['function']['strict'] for s in requests[0]['tools'])
     assert json.loads(json.dumps(result)) == result  # persisted messages retain tool IDs and arguments
 
 
 def test_finalizer_disables_native_tools(monkeypatch, tmp_path):
     agent, requests = agent_with_api(monkeypatch, tmp_path, [
-        reply('search', '{"query":["x"]}'), reply(content='<answer>done</answer>', finish='stop')], max_rounds=1)
+        reply('search', '{"query":["x"]}'), reply(content='{"answer":"done"}', finish='stop')], max_rounds=4)
     agent.custom_call_tool = lambda *_: 'evidence'
     result = agent._run({'item': {'question': 'test', 'answer': 'done'}}, 'test-model')
     assert result['prediction'] == 'done'
@@ -134,10 +136,11 @@ def test_finalizer_disables_native_tools(monkeypatch, tmp_path):
 def test_native_mode_does_not_execute_prose_calls(monkeypatch, tmp_path):
     agent, requests = agent_with_api(monkeypatch, tmp_path, [
         reply(content='<tool_call>{"name":"search","arguments":{"query":["x"]}}</tool_call>'),
-        reply(content='<answer>done</answer>', finish='stop')])
+        reply(content='<answer>done</answer>', finish='stop'),
+        reply(content='{"answer":"done"}', finish='stop')])
     agent.custom_call_tool = lambda *_: pytest.fail('text is not a tool call')
     agent._run({'item': {'question': 'test', 'answer': 'done'}}, 'test-model')
-    assert 'not executed' in requests[-1]['messages'][-1]['content']
+    assert any('not executed' in str(m.get('content','')) for m in requests[-1]['messages'])
 
 
 def test_hide_results_keeps_native_pairs(monkeypatch, tmp_path):
@@ -159,7 +162,8 @@ def test_hide_results_keeps_native_pairs(monkeypatch, tmp_path):
 def test_invalid_call_can_be_replayed_without_corrupting_saved_trajectory(monkeypatch, tmp_path):
     agent, requests = agent_with_api(monkeypatch, tmp_path, [
         reply('search', '{"query":["broken"]'),
-        reply(content='<answer>done</answer>', finish='stop')])
+        reply(content='<answer>done</answer>', finish='stop'),
+        reply(content='{"answer":"done"}', finish='stop')])
     agent.custom_call_tool = lambda *_: pytest.fail('invalid call')
     result = agent._run({'item': {'question': 'test', 'answer': 'done'}}, 'test-model')
     assert result['messages'][2]['tool_calls'][0]['function']['arguments'] == '{"query":["broken"]'

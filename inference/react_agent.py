@@ -1003,7 +1003,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
         return None
 
-    def call_server(self, msgs, max_tries=10, *, allow_tools=True):
+    def call_server(self, msgs, max_tries=10, *, allow_tools=True, structured_final=False):
 
         if native_tools.enabled() and os.getenv("QUEST_DEEPSEEK_TEACHER") == "1":
             raise ValueError("Native tool mode is configured for vLLM, not the legacy teacher transport")
@@ -1052,13 +1052,24 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                     api_key=openai_api_key,
                     base_url=openai_api_base,
                     timeout=600.0,
+                    max_retries=0,
                 )
+                tl.policy_http_attempts = getattr(tl, 'policy_http_attempts', 0) + 1
+                if attempt:
+                    tl.policy_http_retries = getattr(tl, 'policy_http_retries', 0) + 1
                 max_tokens = int(os.getenv('LLM_MAX_TOKENS', '10000'))
                 tool_options = ({'tools': native_tools.tool_schemas(TOOL_MAP),
                                  'tool_choice': 'auto' if allow_tools else 'none',
                                  'parallel_tool_calls': False}
                                 if native_tools.enabled() else
                                 {'stop': ["\n<tool_response>", "<tool_response>"]})
+                if structured_final:
+                    tool_options['response_format'] = {'type': 'json_schema', 'json_schema': {
+                        'name': 'final_answer', 'strict': True, 'schema': {
+                            'type': 'object', 'properties': {'answer': {'type': 'string', 'minLength': 1}},
+                            'required': ['answer'], 'additionalProperties': False}}}
+                    tool_options['extra_body'] = {'chat_template_kwargs': {'enable_thinking': False}}
+                    max_tokens = int(os.getenv('QUEST_FINAL_MAX_TOKENS', '2048'))
                 chat_response = client.chat.completions.create(
                     model=tl.model,
                     messages=native_tools.prepare_messages(msgs) if native_tools.enabled() else msgs,
@@ -1168,7 +1179,12 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
         resume_num_rounds = int(data.get("resume_num_rounds") or 0)
         resume_enabled = isinstance(resume_messages, list) and len(resume_messages) > 0
 
+        tl.policy_http_attempts = 0
+        tl.policy_http_retries = 0
+        tl.policy_call_counts = {'research': 0, 'final': 0, 'correction': 0}
+
         def attach_resume_metadata(result: Dict) -> Dict:
+            result['policy_call_counts'] = dict(tl.policy_call_counts, http_attempts=tl.policy_http_attempts, http_retries=tl.policy_http_retries)
             if resume_enabled:
                 result["resumed_from_messages"] = True
                 result["resume_start_num_rounds"] = resume_num_rounds
@@ -1313,14 +1329,60 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         # Initialize the full message history (not compressed by condenser), used for trajectory_no_memory
         tl.full_messages = copy.deepcopy(messages)
-        num_llm_calls_available = max(0, MAX_LLM_CALL_PER_RUN - resume_num_rounds)
+        native_final = native_tools.enabled()
+        reserve = min(3, MAX_LLM_CALL_PER_RUN) if native_final else 0
+        num_llm_calls_available = max(0, MAX_LLM_CALL_PER_RUN - reserve - resume_num_rounds)
         round = resume_num_rounds
+
+        def finalize(reason):
+            remaining = max(0, MAX_LLM_CALL_PER_RUN - round)
+            prompt = ('Research is complete. Do not call tools. Using only the evidence already obtained, '
+                      'return a JSON object with an answer string in the requested format. '
+                      'If evidence is insufficient, use "Unknown".')
+            for index in range(min(3, remaining)):
+                user = {'role': 'user', 'content': prompt}
+                messages.append(user); tl.full_messages.append(copy.deepcopy(user))
+                phase = 'final' if index == 0 else 'correction'
+                tl.policy_call_counts[phase] += 1
+                response = self.call_server(messages, allow_tools=False, structured_final=True)
+                raw = str(response or '')
+                raw_msg = {'role': 'assistant', 'content': raw}
+                messages.append(raw_msg); tl.full_messages.append(copy.deepcopy(raw_msg))
+                try:
+                    parsed = json.loads(raw)
+                    value = parsed['answer'] if isinstance(parsed, dict) and set(parsed) == {'answer'} else None
+                    if not isinstance(value, str) or not value.strip() or '</answer>' in value or '<answer>' in value:
+                        raise ValueError('invalid answer field')
+                    if getattr(response, 'finish_reason', None) == 'length':
+                        raise ValueError('truncated final output')
+                except (ValueError, KeyError, TypeError):
+                    prompt = 'The previous output was invalid. Return only a JSON object with a nonempty answer string.'
+                    continue
+                prediction = value.strip()
+                wrapped = {'role': 'assistant', 'content': '<answer>' + prediction + '</answer>'}
+                messages.append(wrapped); tl.full_messages.append(copy.deepcopy(wrapped))
+                return prediction, 'generate an answer as ' + reason
+            return 'answer not found.', 'answer not found.'
+
+        def finalized_result(reason):
+            prediction, termination = finalize(reason)
+            if self.memory_enabled and tl.task_log_dir:
+                self._save_trajectory_for_distillation(messages, state=tl.memory_state, trigger_reason=reason, round_num=round, is_final=True)
+            return attach_resume_metadata({'question': question, 'answer': answer, 'messages': messages,
+                                           'prediction': prediction, 'termination': termination,
+                                           'num_rounds': round, 'task_log_dir': tl.task_log_dir,
+                                           'filename': tl.current_filename})
+
+        if native_final and num_llm_calls_available == 0:
+            return finalized_result('llm_call_limit')
         # Note:memory state has already been reset at the start of the function, so it does not need to be reset again here
         
         while num_llm_calls_available > 0:
             # Check whether time is reached
             max_minutes = int(os.getenv('MAX_RUNTIME_MINUTES', '1440'))
             if time.time() - start_time > max_minutes * 60:
+                if native_final:
+                    return finalized_result('runtime_limit')
                 prediction = f'No answer found after {max_minutes}min'
                 termination = f'No answer found after {max_minutes}min'
                 
@@ -1356,6 +1418,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             num_llm_calls_available -= 1
             # Reset the CONTEXT_THRESHOLD trigger flag at the start of each round so it can trigger again in the new round
             tl.context_threshold_triggered = False
+            tl.policy_call_counts['research'] += 1
             content = self.call_server(messages)   #todo!!raw initial answer; may contain URLs in tool calls
             print(f'Round {round}: {content}')
             if not native_tools.enabled() and '<tool_response>' in content:
@@ -1473,9 +1536,13 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
             
             if has_answer:
+                if native_final:
+                    return finalized_result('answer_ready')
                 termination = 'answer'
                 break
             if num_llm_calls_available <= 0 and not has_answer:
+                if native_final:
+                    return finalized_result('llm_call_limit')
                 print("LLM call count reached the limit, forcing a final answer.")
 
                 llm_call_limit_prompt = (
@@ -1554,6 +1621,8 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 return attach_resume_metadata(result)
 
             if token_count > max_tokens:
+                if native_final:
+                    return finalized_result('token_limit')
                 print(f"Token quantity exceeds the limit: {token_count} > {max_tokens}")
 
                 token_limit_prompt = "You have now reached the maximum context length you can handle. You should stop making tool calls and, based on all the information above, think again and provide what you consider the most likely answer in the following format:<think>your final thinking</think>\n<answer>your answer</answer>"
