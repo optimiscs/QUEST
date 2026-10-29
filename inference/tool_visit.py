@@ -87,6 +87,7 @@ class VisitCache:
         self.shard_dir = VISIT_CACHE_SHARD_DIR
         os.makedirs(self.shard_dir, exist_ok=True)
         self._master_lock = threading.Lock()
+        self._conn_init_lock = threading.Lock()
         self._conns: dict[int, sqlite3.Connection] = {}
         self._locks: dict[int, threading.Lock] = {}
 
@@ -167,9 +168,12 @@ class VisitCache:
 
     def _get_conn(self, shard_id: int) -> sqlite3.Connection:
         if shard_id not in self._conns:
-            path = self.cache_file if self.shards == 1 else self._shard_files[shard_id]
-            self._conns[shard_id] = self._open_conn(path)
-            self._locks[shard_id] = threading.Lock()
+            with self._conn_init_lock:
+                if shard_id not in self._conns:
+                    path = self.cache_file if self.shards == 1 else self._shard_files[shard_id]
+                    conn = self._open_conn(path)
+                    self._locks[shard_id] = threading.Lock()
+                    self._conns[shard_id] = conn
         return self._conns[shard_id]
 
     def _shard_id(self, url: str) -> int:
@@ -451,6 +455,7 @@ class Visit(BaseTool):
         """Initialize the Visit tool and create the cache instance"""
         super().__init__(*args, **kwargs)
         self.cache = VisitCache(resume=VISIT_CACHE_RESUME, shards=VISIT_CACHE_SHARDS) if VISIT_CACHE_ENABLED else None
+        self._audit_lock = threading.Lock()
     
     def _validate_url(self, url: str) -> Tuple[bool, str]:
         """
@@ -544,6 +549,9 @@ class Visit(BaseTool):
         original_content = content
         
         if content and not content.startswith("[visit] Failed to read page after all retries.") and content != "[visit] Empty content." and not content.startswith("[document_parser]") and not content.startswith("[visit] Error"):
+            content, direct = self._experiment_content(url, goal, content)
+            if direct:
+                return self._experiment_direct_response(url, goal, content)
             content = truncate_to_tokens(content, max_tokens=visit_max_content_tokens())
             messages = build_visit_extractor_messages(content, goal)
             parse_retry_times = 0
@@ -587,7 +595,7 @@ class Visit(BaseTool):
             
             # Write to cache only on success(normal status code and successfully parsed result)
             # Check conditions:1) the original content is not an error 2) JSON was parsed successfully 3) useful_information is not a failure message
-            if (self.cache and original_content and 
+            if (self.cache and not os.getenv('VISIT_EXPERIMENT_METHOD') and original_content and
                 not original_content.startswith("[visit] Failed to read page after all retries.") and 
                 not original_content.startswith("[visit] Error") and
                 parse_retry_times < 3 and  # JSON was parsed successfully
@@ -605,6 +613,30 @@ class Visit(BaseTool):
             
             return useful_information
     
+    def _experiment_content(self, url, goal, content):
+        method = os.getenv('VISIT_EXPERIMENT_METHOD', '').strip()
+        if not method:
+            return content, False
+        from retrieval_experiment import select
+        selected, audit = select(content, goal, method,
+            embedding_url=os.getenv('VISIT_EMBEDDING_URL'),
+            reranker_url=os.getenv('VISIT_RERANKER_URL'))
+        audit.update(url=url, goal=goal, method=method, delivery=os.getenv('VISIT_EXPERIMENT_DELIVERY', 'summary'))
+        if audit['delivery'] == 'summary':
+            audit['flash_thinking'] = 'disabled'
+        audit_path = os.getenv('VISIT_EXPERIMENT_AUDIT')
+        if audit_path:
+            audit['original_content'] = content
+            audit['selected_content'] = selected
+            with self._audit_lock:
+                with open(audit_path, 'a', encoding='utf-8') as handle:
+                    handle.write(json.dumps(audit, ensure_ascii=False) + '\n')
+        return selected, audit['delivery'] == 'direct'
+
+    @staticmethod
+    def _experiment_direct_response(url, goal, content):
+        return f'The useful information in {url} for user goal {goal} as follows: \n\nEvidence in page: \n{content}\n\n'
+
     # The `call` method is the main function of the tool.
     def call(self, params: Union[str, dict], **kwargs) -> str:
         if not isinstance(params, dict):
@@ -612,6 +644,12 @@ class Visit(BaseTool):
 
         url = params.get("url", "")
         goal = params.get("goal", "Extract relevant information")
+        # Agents occasionally emit a list for goal although the tool schema
+        # specifies a string. Normalize before BM25, prompts, and cache lookups.
+        if isinstance(goal, list):
+            goal = '; '.join(str(value) for value in goal if value is not None)
+        elif not isinstance(goal, str):
+            goal = str(goal) if goal is not None else 'Extract relevant information'
         if not url:
             return "[Visit Error] URL cannot be empty."
 
@@ -628,7 +666,7 @@ class Visit(BaseTool):
                 return error_msg
             
             # Cache lookup logic
-            if self.cache:
+            if self.cache and not os.getenv('VISIT_EXPERIMENT_METHOD'):
                 # 1. Check url+goal first; if present, return useful_information directly
                 useful_information = self.cache.get_useful_information(url, goal)
                 if useful_information:
@@ -645,15 +683,13 @@ class Visit(BaseTool):
             # 3. If neither exists, run the original pipeline
             response = self.readpage_jina(url, goal)
         else:
-            response = []
             urls = url if isinstance(url, List) else [url]
             start_time = time.time()
-            for u in urls:
+            def visit_one(u):
                 # Validate each URL
                 is_valid, error_msg = self._validate_url(u)
                 if not is_valid:
-                    response.append(error_msg)
-                    continue
+                    return error_msg
                 
                 if time.time() - start_time > 900:
                     cur_response = "The useful information in {url} for user goal {goal} as follows: \n\n".format(url=url, goal=goal)
@@ -662,7 +698,7 @@ class Visit(BaseTool):
                 else:
                     try:
                         # Apply the cache lookup logic to each URL as well
-                        if self.cache:
+                        if self.cache and not os.getenv('VISIT_EXPERIMENT_METHOD'):
                             # 1. Check url+goal first
                             useful_information = self.cache.get_useful_information(u, goal)
                             if useful_information:
@@ -681,7 +717,16 @@ class Visit(BaseTool):
                             cur_response = self.readpage_jina(u, goal)
                     except Exception as e:
                         cur_response = f"[visit] Error: Unexpected error: {str(e)}"
-                response.append(cur_response)
+                return cur_response
+            try:
+                page_workers = max(1, min(16, int(os.getenv('VISIT_PAGE_CONCURRENCY', '16'))))
+            except ValueError:
+                page_workers = 16
+            if page_workers == 1 or len(urls) <= 1:
+                response = [visit_one(u) for u in urls]
+            else:
+                with ThreadPoolExecutor(max_workers=min(page_workers, len(urls)), thread_name_prefix='quest-visit') as executor:
+                    response = list(executor.map(visit_one, urls))
             response = "\n=======\n".join(response)
         
         print(f'Summary Length {len(response)}; Summary Content {response}')
@@ -747,7 +792,10 @@ class Visit(BaseTool):
                 chat_response = client.chat.completions.create(
                     model=model_name,
                     messages=msgs,
-                    temperature=1
+                    temperature=1,
+                    **({'extra_body': {'thinking': {'type': 'disabled'}}}
+                       if os.getenv('VISIT_EXPERIMENT_METHOD') and os.getenv('VISIT_EXPERIMENT_DELIVERY') == 'summary'
+                       else {})
                 )
                 content = chat_response.choices[0].message.content
                 if content:
@@ -785,6 +833,7 @@ class Visit(BaseTool):
 
         max_retries = 3
         timeout = 50
+        bounded_retries = os.getenv('VISIT_READER_BOUNDED_RETRIES', '').lower() == 'true'
         headers = {"Authorization": f"Bearer {JINA_API_KEYS}"}
 
         for attempt in range(max_retries):
@@ -805,6 +854,10 @@ class Visit(BaseTool):
                 except Exception:
                     error_info = f"[visit] Error (HTTP {response.status_code}): {response.text[:500]}"
 
+                # The shared requests hook has already rotated unusable 401/402
+                # keys. Repeating a permanent page error cannot recover content.
+                if bounded_retries and response.status_code in {400, 401, 402, 403, 404, 405, 410, 415, 451}:
+                    return error_info
                 if attempt == max_retries - 1:
                     return error_info
             except requests.exceptions.Timeout:
@@ -820,7 +873,9 @@ class Visit(BaseTool):
         return "[visit] Failed to read page after all retries."
 
     def html_readpage_jina(self, url: str) -> str:
-        max_attempts = 8
+        # jina_readpage already retries transient failures three times. Avoid
+        # multiplying this by eight for an unavailable page in bounded mode.
+        max_attempts = 1 if os.getenv('VISIT_READER_BOUNDED_RETRIES', '').lower() == 'true' else 8
         last_error = None
         for attempt in range(max_attempts):
             content = self.jina_readpage(url)
@@ -868,6 +923,9 @@ class Visit(BaseTool):
             return useful_information
 
         if content and not content.startswith("[visit] Failed") and content != "[visit] Empty content." and not content.startswith("[document_parser]"):
+            content, direct = self._experiment_content(url, goal, content)
+            if direct:
+                return self._experiment_direct_response(url, goal, content)
             content = truncate_to_tokens(content, max_tokens=visit_max_content_tokens())
             messages = build_visit_extractor_messages(content, goal)
             parse_retry_times = 0
@@ -911,7 +969,7 @@ class Visit(BaseTool):
             
             # Write to cache only on success(normal status code and successfully parsed result)
             # Check conditions:1) the original content is not an error 2) JSON was parsed successfully 3) useful_information is not a failure message
-            if (self.cache and original_content and 
+            if (self.cache and not os.getenv('VISIT_EXPERIMENT_METHOD') and original_content and
                 not original_content.startswith("[visit] Failed to read page after all retries.") and 
                 not original_content.startswith("[visit] Error") and
                 parse_retry_times < 3 and  # JSON was parsed successfully

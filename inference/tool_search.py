@@ -298,6 +298,10 @@ class Search(BaseTool):
                     return f"Google search Timeout, return None, Please try again later."
                 continue
         data = res.read()
+        if res.status != 200:
+            if res.status == 429:
+                return '[Search Error] Search service temporarily rate limited (HTTP 429); retry later.'
+            return f'[Search Error] Search service returned HTTP {res.status}; the search result is unavailable.'
         results = json.loads(data.decode("utf-8"))
         try:
             if "organic" not in results:
@@ -334,7 +338,7 @@ class Search(BaseTool):
 
     def _filter_huggingface_from_result(self, result: str) -> str:
         """Filter out huggingface.co URLs from the formatted search result string."""
-        if not result or result.startswith("No results found") or result.startswith("Google search Timeout"):
+        if not result or result.startswith(("No results found", "Google search Timeout", "[Search Error]")):
             return result
 
         # Detect old format (contains "## Web Results")
@@ -474,7 +478,7 @@ class Search(BaseTool):
         result = self.google_search_with_serp(query)
 
         # Cache the unfiltered result
-        if self.cache and result and not result.startswith("No results found") and not result.startswith("Google search Timeout"):
+        if self.cache and result and not result.startswith(("No results found", "Google search Timeout", "[Search Error]")):
             self.cache.set(query, result)
 
         # Filter huggingface.co URLs from result if blocking is enabled

@@ -3,10 +3,19 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 ADAPTER=ROOT/"contrib/deepseek_data"
 class SafetyTests(unittest.TestCase):
+ def test_tool_examples_inside_thinking_are_not_executed(self):
+  tree=ast.parse((ROOT/'inference/react_agent.py').read_text());fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='visible_tool_calls')
+  scope={};exec('import re\nfrom typing import List',scope);exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),'actions','exec'),scope)
+  f=scope['visible_tool_calls']
+  self.assertEqual(f('<think>Example <tool_call>{"name":"example"}</tool_call></think><answer>1359</answer>'),[])
+  self.assertEqual(f('<think>done</think><tool_call>{"name":"search"}</tool_call>'),['{"name":"search"}'])
+  self.assertEqual(f('```xml\n<tool_call>example</tool_call>\n```'),[])
  def test_answer_extraction_ignores_think(self):
   tree=ast.parse((ROOT/"inference/react_agent.py").read_text());fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=="extract_non_thinking_answer")
   scope={};exec("import re\nfrom typing import Optional",scope);exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),"answer","exec"),scope)
   f=scope["extract_non_thinking_answer"];self.assertEqual(f("<think><answer>wrong</answer></think><answer>right</answer>"),"right");self.assertIsNone(f("<think><answer>secret</answer>"))
+  self.assertIsNone(f("Example:\n```json\n<answer>example</answer>\n```\nContinuing."))
+  self.assertEqual(f("<answer>```python\nprint(1)\n```</answer>"),"```python\nprint(1)\n```")
  def test_export_requires_scored_and_threshold(self):
   with tempfile.TemporaryDirectory() as d:
    p=Path(d);(p/"sessions.jsonl").write_text(json.dumps({"messages":[{"role":"user","content":"q"},{"role":"assistant","content":"a"}]})+"\n")

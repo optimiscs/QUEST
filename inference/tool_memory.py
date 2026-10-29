@@ -418,6 +418,8 @@ class Memory(BaseTool):
             "temperature": 1,
             "num_retries": max_retries
         }
+        if os.environ.get('MEMORY_DISABLE_THINKING', '').lower() == 'true':
+            call_kwargs['extra_body'] = {'chat_template_kwargs': {'enable_thinking': False}}
         
         # Use the shared API/Azure configuration, with legacy memory-specific vars as fallback.
         api_key = (
@@ -669,6 +671,25 @@ IMPORTANT: If no state changes are warranted, return prev_state unchanged."""
             
             # Call the API
             result = self.call_api_with_litellm(messages)
+            # Keep malformed summaries out of the state. When explicitly
+            # enabled, give the same model one chance to correct its own JSON;
+            # retain the original response if the retry is also invalid.
+            if (os.getenv('MEMORY_RETRY_INVALID_JSON', '').lower() == 'true'
+                    and result and not result.startswith('[Memory]')
+                    and self._extract_json_from_response(result) is None):
+                estimated = self.count_tokens(formatted_content) + self.count_tokens(result)
+                if 0 < estimated < 56000:
+                    print('[Memory] Invalid JSON; retrying once with an explicit format correction', flush=True)
+                    retry_messages = messages + [
+                        {'role': 'assistant', 'content': result},
+                        {'role': 'user', 'content': 'The previous state is invalid JSON. Return the complete corrected state as one valid JSON object, with commas between fields and escaped newlines inside strings. Preserve the supported facts and do not add unsupported facts.'},
+                    ]
+                    retry_result = self.call_api_with_litellm(retry_messages)
+                    if retry_result and isinstance(self._extract_json_from_response(retry_result), dict):
+                        print('[Memory] JSON retry produced a parseable state', flush=True)
+                        result = retry_result
+                    else:
+                        print('[Memory] JSON retry remained invalid; original state retained', flush=True)
             return result
                 
         except json.JSONDecodeError as e:

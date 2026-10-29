@@ -1,0 +1,7 @@
+{
+  "instruction": "Make exactly one tool call at a time. Output one <tool_call> block, then wait for the tool response. The content inside the block must be a valid JSON object with double-quoted keys and strings. Use a colon after each key, and close every array and object. Do not put comments or markdown inside the JSON.",
+  "examples": {
+    "search": {"name":"search", "arguments":{"query":["When was the Eiffel Tower completed?"]}},
+    "visit": {"name":"visit", "arguments":{"url":["https://example.com/history"], "goal":"Find the completion date"}}
+  }
+}
