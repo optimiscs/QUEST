@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -101,6 +102,12 @@ if os.environ.get('QUEST_KEY_ROTATION') == '1' and os.environ.get('QUEST_KEY_ROT
             headers = {k: v for k, v in headers.items() if k.lower() != 'authorization'}
             headers['Authorization'] = key if key.lower().startswith('bearer ') else 'Bearer ' + key
             opts = dict(kwargs, headers=headers)
+            if attempted:
+                # Rotation is another HTTP request, not a free nested retry.
+                guard_module = sys.modules.get('reader_retry_guard')
+                guard = getattr(guard_module.local, 'current', None) if guard_module else None
+                if guard is not None:
+                    guard.before()
             response = original_request(self, method, url, **opts)
             record('jina', 'response', index, response.status_code)
             if not switchable(response.status_code, response.text): return response

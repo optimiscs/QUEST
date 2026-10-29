@@ -836,13 +836,21 @@ class Visit(BaseTool):
         bounded_retries = os.getenv('VISIT_READER_BOUNDED_RETRIES', '').lower() == 'true'
         headers = {"Authorization": f"Bearer {JINA_API_KEYS}"}
 
+        from reader_retry_guard import Guard, GuardRejected, local as guard_local
+        guard = Guard()
         for attempt in range(max_retries):
             try:
-                response = requests.get(
+                guard.before()
+                guard_local.current = guard
+                try:
+                    response = requests.get(
                     f"https://r.jina.ai/{url}",
                     headers=headers,
                     timeout=timeout,
-                )
+                    )
+                finally:
+                    guard_local.current = None
+                guard.finish()
                 if response.status_code == 200:
                     return response.text
 
@@ -860,13 +868,22 @@ class Visit(BaseTool):
                     return error_info
                 if attempt == max_retries - 1:
                     return error_info
+            except GuardRejected as e:
+                return f"[visit] Error: {e}"
+            except requests.exceptions.ProxyError as e:
+                guard.finish(proxy_error=True)
+                if attempt == max_retries - 1:
+                    return f"[visit] Error: Network error: {str(e)}"
             except requests.exceptions.Timeout:
+                guard.finish()
                 if attempt == max_retries - 1:
                     return f"[visit] Error: Request timed out after {timeout}s"
             except requests.exceptions.RequestException as e:
+                guard.finish()
                 if attempt == max_retries - 1:
                     return f"[visit] Error: Network error: {str(e)}"
             except Exception as e:
+                guard.finish()
                 if attempt == max_retries - 1:
                     return f"[visit] Error: Unexpected error: {str(e)}"
 
@@ -884,7 +901,7 @@ class Visit(BaseTool):
     def _html_readpage_jina_uncollapsed(self, url: str) -> str:
         # jina_readpage already retries transient failures three times. Avoid
         # multiplying this by eight for an unavailable page in bounded mode.
-        max_attempts = 1 if os.getenv('VISIT_READER_BOUNDED_RETRIES', '').lower() == 'true' else 8
+        max_attempts = 1  # One shared per-read budget, including key rotation.
         last_error = None
         for attempt in range(max_attempts):
             content = self.jina_readpage(url)

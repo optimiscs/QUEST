@@ -49,7 +49,7 @@ def test_bounded_mode_is_opt_in_and_does_not_multiply_retries(monkeypatch):
  def get(*args,**kwargs):calls.append(kwargs);return SimpleNamespace(status_code=404,text='missing')
  monkeypatch.setattr(tool_visit.requests,'get',get)
  assert 'HTTP 404' in visit.html_readpage_jina('https://example.test/missing')
- assert len(calls)==24
+ assert len(calls)==3
 
 
 def test_transient_errors_use_exponential_full_jitter(monkeypatch):
