@@ -1,5 +1,5 @@
 """BrowseComp 25%: five SFT endpoints, pooled BM25, local 4B memory/judge."""
-import concurrent.futures,fcntl,json,os,re,subprocess,sys,time
+import concurrent.futures,fcntl,hashlib,json,os,re,subprocess,sys,time
 from pathlib import Path
 import requests
 from openai import OpenAI
@@ -17,8 +17,15 @@ def parse_verdict(raw):
  m=re.search(r'(?im)^\s*correct:\s*(yes|no)\b',raw)
  return None if not m else m.group(1).lower()=='yes'
 
+def visible_judge_response(result):
+ messages=result.get('messages',[])
+ raw=str(messages[-1].get('content','') or '') if messages else str(result.get('prediction','') or '')
+ visible=raw.rsplit('</think>',1)[-1].split('<think>',1)[0]
+ visible=re.sub(r'<tool_call>.*?</tool_call>','',visible,flags=re.S).split('<tool_call>',1)[0]
+ return visible.strip()
+
 def judge(case,port,ref,result_path,receipt_tag='local-judge',prior_raw=None):
- start=time.time();result=json.loads(Path(result_path).read_text().splitlines()[-1]); messages=result.get('messages',[]);response=str(messages[-1].get('content','')) if messages else str(result.get('prediction',''))
+ start=time.time();result=json.loads(Path(result_path).read_text().splitlines()[-1]);response=visible_judge_response(result)
  prompt=(RUN/'configs/grader-template.txt').read_text().format(question=ref['question'],correct_answer=ref['answer'],response=response)
  try:
   client=OpenAI(base_url=f'http://127.0.0.1:{port}/v1',api_key='EMPTY',timeout=300)
@@ -32,6 +39,7 @@ def judge(case,port,ref,result_path,receipt_tag='local-judge',prior_raw=None):
    retry_raw=retry.choices[0].message.content or '';verdict=parse_verdict(retry_raw)
   out={'judge_model':'QWEN35-BASE','duration_s':time.time()-start,'raw':raw,'format_retry_raw':retry_raw,'status':'scored' if verdict is not None else 'unavailable','is_correct':verdict,'judgment':'BrowseComp 官方判分提示；本地 4B 裁判' if verdict is not None else '本地裁判输出无法解析'}
  except Exception as exc:out={'judge_model':'QWEN35-BASE','duration_s':time.time()-start,'raw':locals().get('raw'),'status':'unavailable','is_correct':None,'judgment':'裁判调用失败: '+type(exc).__name__}
+ out.update(response_filter='visible_final_only',graded_response=response,source_result_path=str(result_path),source_result_sha256=hashlib.sha256(Path(result_path).read_bytes()).hexdigest(),prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest())
  save(RUN/'checks'/f'{case}-{receipt_tag}.json',out);return out
 
 def main():

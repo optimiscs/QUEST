@@ -1,7 +1,8 @@
 """Incremental metrics for the BrowseComp experiment, keeping anomalies visible."""
-import collections,json,math,re,time
+import collections,json,math,re,sys,time
 from pathlib import Path
 R=Path(__file__).resolve().parents[2];RUN=R/'workspace/strict-reproduction/browsecomp-sft-25pct-pool64-20261029-r1';OUT=R/'web/trace-viewer/datasets/browsecomp-sft-25pct-pool64-20261029-r1-metrics.json'
+sys.path.insert(0,str(R));from inference.visible_judge_state import apply_visible_judgment,visible_judging_finished
 def stats(xs):
  xs=sorted(x for x in xs if isinstance(x,(int,float)) and math.isfinite(x) and x>=0)
  return {'n':len(xs),'mean':sum(xs)/len(xs) if xs else None,'p50':xs[math.ceil(.5*len(xs))-1] if xs else None,'p95':xs[math.ceil(.95*len(xs))-1] if xs else None}
@@ -18,14 +19,19 @@ def calc():
   if row.get('agent_state')=='terminal' and final_path.exists():
    try:
     recovery=json.loads(final_path.read_text())
-    if recovery.get('status')=='scored' and isinstance(recovery.get('is_correct'),bool):row=dict(row,judge_state='scored',is_correct=recovery['is_correct']);c['final_answer_recovered']+=1
+    if recovery.get('status')=='scored' and isinstance(recovery.get('is_correct'),bool):row=dict(row,judge_state='scored',is_correct=recovery['is_correct'],result_path=recovery['recovery_result_path']);c['final_answer_recovered']+=1
    except (OSError,ValueError):pass
   retry_path=RUN/'checks'/f'{case}-local-judge-retry.json'
-  if row.get('judge_state')=='unavailable' and retry_path.exists():
+  if retry_path.exists():
    try:
     retry=json.loads(retry_path.read_text())
-    if retry.get('status')=='scored' and isinstance(retry.get('is_correct'),bool):row=dict(row,judge_state='scored',is_correct=retry['is_correct']);c['judge_recovered']+=1
+    if retry.get('status')=='scored' and isinstance(retry.get('is_correct'),bool):
+     c['judge_recovered']+=1
+     if row.get('judge_state')=='unavailable':row=dict(row,judge_state='scored',is_correct=retry['is_correct'])
    except (OSError,ValueError):pass
+  if row.get('judge_state')=='scored':c['legacy_scored']+=1;c['legacy_correct']+=row.get('is_correct') is True
+  row,visible_receipt=apply_visible_judgment(RUN,case,row)
+  if visible_receipt:c['visible_judge_receipts']+=1
   states[row.get('agent_state')]+=1;states['judge_'+row.get('judge_state','unknown')]+=1
   if row.get('judge_state')=='scored':c['scored']+=1;c['correct']+=row.get('is_correct') is True
   if row.get('agent_returncode')==0 and row.get('judge_state')=='scored' and row.get('agent_ended_epoch') and row.get('agent_started_epoch'):times['task'].append(row['agent_ended_epoch']-row['agent_started_epoch'])
@@ -94,7 +100,7 @@ def main():
  while True:
   try:
    x=calc();tmp=OUT.with_suffix('.tmp');tmp.write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n');tmp.replace(OUT);print('scored',x['counts'].get('scored',0),'running',x['states'].get('running',0),flush=True)
-   if x['states'].get('terminal',0)==x['total'] and not x['states'].get('judge_pending',0) and not x['states'].get('judge_running',0) and (RUN/'checks/judge-recovery-complete.json').exists() and (RUN/'checks/final-answer-recovery-complete.json').exists():break
+   if x['states'].get('terminal',0)==x['total'] and not x['states'].get('judge_pending',0) and not x['states'].get('judge_running',0) and (RUN/'checks/judge-recovery-complete.json').exists() and (RUN/'checks/final-answer-recovery-complete.json').exists() and visible_judging_finished(RUN):break
   except (OSError,ValueError,KeyError) as e:print('metrics error',repr(e),flush=True)
   time.sleep(60)
 

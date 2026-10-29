@@ -2,6 +2,7 @@
 import json,subprocess,sys,time
 from pathlib import Path
 R=Path(__file__).resolve().parents[2];RUN=R/'workspace/strict-reproduction/browsecomp-sft-25pct-pool64-20261029-r1';SITE=R/'web/trace-viewer';ID=RUN.name
+sys.path.insert(0,str(R));from inference.visible_judge_state import visible_judging_finished
 while True:
  try:
   p=RUN/'status.json'
@@ -15,6 +16,6 @@ while True:
     index['datasets'].append({'id':ID,'label':'BrowseComp 25% · 4B SFT · BM25 64','description':'317 条；本地 4B 记忆与官方提示词本地 4B 评分','folder':'datasets/'+ID,'data':'datasets/'+ID+'/traces.json','benchmark':'BrowseComp','visible':True})
     tmp=indexfile.with_suffix('.tmp');tmp.write_text(json.dumps(index,ensure_ascii=False,indent=2)+'\n');tmp.replace(indexfile)
   print('published terminal',sum(x['agent_state']=='terminal' for x in state.values()),'scored',sum(x['judge_state']=='scored' for x in state.values()),flush=True)
-  if (all(x['agent_state']=='terminal' and x['judge_state'] not in ('pending','running') for x in state.values()) and (RUN/'checks/judge-recovery-complete.json').exists() and (RUN/'checks/final-answer-recovery-complete.json').exists()):break
+  if (all(x['agent_state']=='terminal' and x['judge_state'] not in ('pending','running') for x in state.values()) and (RUN/'checks/judge-recovery-complete.json').exists() and (RUN/'checks/final-answer-recovery-complete.json').exists() and visible_judging_finished(RUN)):break
  except Exception as exc:print('publisher error',repr(exc),flush=True)
  time.sleep(60)

@@ -3,11 +3,12 @@
 This creates a review queue, never changes a score. String checks are only
 screening heuristics; they cannot judge semantic equivalence.
 """
-import json,re,time,unicodedata
+import json,re,sys,time,unicodedata
 from pathlib import Path
 R=Path(__file__).resolve().parents[2]/'workspace/strict-reproduction/browsecomp-sft-25pct-pool64-20261029-r1'
 OUT=R/'checks/judge-review-queue.json'
 PUBLIC=Path(__file__).resolve().parents[2]/'web/trace-viewer/datasets/browsecomp-sft-25pct-pool64-20261029-r1-judge-review.json'
+sys.path.insert(0,str(Path(__file__).resolve().parents[2]));from inference.visible_judge_state import apply_visible_judgment,visible_judging_finished
 def norm(s):
  s=''.join(c for c in unicodedata.normalize('NFKD',str(s)).casefold() if not unicodedata.combining(c))
  return re.sub(r'[^\w]','',s)
@@ -33,7 +34,10 @@ def scan():
  for case,row in rows.items():
   if row.get('agent_state')!='terminal' or not row.get('result_path'):continue
   receipt=R/'checks'/f'{case}-local-judge.json'
-  if row.get('judge_state')=='unavailable':
+  if row.get('judge_recovery_path'):
+   candidate=Path(row['judge_recovery_path'])
+   if candidate.exists():receipt=candidate
+  elif row.get('judge_state')=='unavailable':
    candidate=R/'checks'/f'{case}-local-judge-retry.json'
    if candidate.exists():receipt=candidate
   final=R/'checks'/f'{case}-final-answer-recovery.json'
@@ -43,12 +47,16 @@ def scan():
     if recovered.get('status')=='scored' and recovered.get('recovery_result_path'):
      row=dict(row,result_path=recovered['recovery_result_path']);receipt=Path(recovered['judge_receipt'])
    except (OSError,ValueError,KeyError,TypeError):pass
+  row,visible_receipt=apply_visible_judgment(R,case,row)
+  if (R/'checks/visible-response-judge-policy.json').exists():
+   if visible_receipt is None:continue
+   receipt=R/'checks'/f'{case}-visible-response-judge.json'
   if not receipt.exists():continue
   try:
    data=json.loads(receipt.read_text());native=json.loads(Path(row['result_path']).read_text().splitlines()[-1]);answer=refs[case]['answer'];messages=native.get('messages',[])
   except (OSError,ValueError,KeyError,IndexError):continue
   if data.get('status')!='scored':continue
-  checked+=1;raw=messages[-1].get('content','') if messages else '';visible=raw.rsplit('</think>',1)[-1].split('<think>',1)[0];flags=review_flags(data,visible,answer)
+  checked+=1;raw=messages[-1].get('content','') if messages else '';visible=data.get('graded_response',raw.rsplit('</think>',1)[-1].split('<think>',1)[0]);flags=review_flags(data,visible,answer)
   if flags:out.append({'case':case,'flags':flags,'judge_receipt':str(receipt),'result_path':row['result_path']})
  notes_path=R/'checks/judge-review-notes.json'
  try:notes=json.loads(notes_path.read_text()) if notes_path.exists() else {}
@@ -64,7 +72,7 @@ def main():
     tmp=destination.with_suffix('.tmp');tmp.write_text(payload);tmp.replace(destination)
    print('checked',data['checked'],'review',len(data['cases']),'unresolved',data['unresolved'],flush=True)
    rows=json.loads((R/'status.json').read_text())['cases']
-   if all(x['agent_state']=='terminal' and x['judge_state'] not in ('pending','running') for x in rows.values()) and (R/'checks/judge-recovery-complete.json').exists() and (R/'checks/final-answer-recovery-complete.json').exists():break
+   if all(x['agent_state']=='terminal' and x['judge_state'] not in ('pending','running') for x in rows.values()) and (R/'checks/judge-recovery-complete.json').exists() and (R/'checks/final-answer-recovery-complete.json').exists() and visible_judging_finished(R):break
   except (OSError,ValueError,KeyError) as e:print('audit error',repr(e),flush=True)
   time.sleep(60)
 

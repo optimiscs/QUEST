@@ -30,3 +30,16 @@ def test_positive_semantic_variation_and_hallucinated_extraction_still_flagged()
 def test_review_note_does_not_resolve_an_outstanding_judge_disagreement():
  rows=[{'case':'one'},{'case':'two','review':{'status':'needs_independent_verdict'}},{'case':'three','review':{'outcome':'verdict_supported'}}]
  assert module.review_counts(rows)=={'unreviewed':1,'needs_independent_verdict':1,'unresolved':2}
+
+
+def test_recovered_receipt_is_still_screened_after_status_merge(tmp_path,monkeypatch):
+ import json
+ (tmp_path/'checks').mkdir();(tmp_path/'judge/ground-truth').mkdir(parents=True)
+ original=tmp_path/'checks/row0000-local-judge.json';original.write_text(json.dumps({'status':'unavailable','raw':'incomplete'}))
+ retry=tmp_path/'checks/row0000-local-judge-retry.json';retry.write_text(json.dumps({'status':'scored','is_correct':True,'raw':'extracted_final_answer: target\ncorrect: yes'}))
+ result=tmp_path/'result.jsonl';result.write_text(json.dumps({'messages':[{'content':'Exact Answer: target'}]})+'\n')
+ (tmp_path/'status.json').write_text(json.dumps({'cases':{'row0000':{'agent_state':'terminal','judge_state':'scored','result_path':str(result),'judge_recovery_path':str(retry)}}}))
+ (tmp_path/'judge/ground-truth/references.json').write_text(json.dumps([{'case':'row0000','answer':'target'}]))
+ monkeypatch.setattr(module,'R',tmp_path)
+ out=module.scan()
+ assert out['checked']==1 and not out['cases']

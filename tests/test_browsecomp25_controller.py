@@ -23,7 +23,7 @@ def test_local_judge_retries_only_unparseable_output_and_keeps_raw(tmp_path,monk
  from types import SimpleNamespace
  (tmp_path/'configs').mkdir();(tmp_path/'checks').mkdir()
  (tmp_path/'configs/grader-template.txt').write_text('{question}|{correct_answer}|{response}')
- result=tmp_path/'result.jsonl';result.write_text(json.dumps({'messages':[{'role':'assistant','content':'actual response'}]})+'\n')
+ result=tmp_path/'result.jsonl';result.write_text(json.dumps({'messages':[{'role':'assistant','content':'<think>private thoughts</think>actual response'}]})+'\n')
  replies=iter(['reasoning: mismatch','correct: no']);calls=[]
  def create(**kwargs):calls.append(kwargs);return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=next(replies)))])
  monkeypatch.setattr(mod,'RUN',tmp_path);monkeypatch.setattr(mod,'OpenAI',lambda **kw:SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
@@ -31,3 +31,12 @@ def test_local_judge_retries_only_unparseable_output_and_keeps_raw(tmp_path,monk
  assert out['status']=='scored' and out['is_correct'] is False
  assert out['raw']=='reasoning: mismatch' and out['format_retry_raw']=='correct: no'
  assert len(calls)==2 and (tmp_path/'checks/row0000-local-judge-retry.json').exists()
+ assert 'actual response' in calls[0]['messages'][0]['content'] and 'private thoughts' not in calls[0]['messages'][0]['content']
+ assert out['response_filter']=='visible_final_only' and out['graded_response']=='actual response'
+
+
+def test_judge_input_excludes_thoughts_and_protocol_tool_queries():
+ assert mod.visible_judge_response({'messages':[{'content':'<think>Secret Gold</think>Exact Answer: Other'}]})=='Exact Answer: Other'
+ assert mod.visible_judge_response({'messages':[{'content':'<think>Secret Gold without a closing tag'}]})==''
+ assert mod.visible_judge_response({'messages':[{'content':'<tool_call>{"name":"search","arguments":{"query":["Secret Gold"]}}</tool_call>'}]})==''
+ assert mod.visible_judge_response({'messages':[{'content':'<think>candidate</think><answer>final</answer>\nConfidence: 90%'}]})=='<answer>final</answer>\nConfidence: 90%'

@@ -43,3 +43,12 @@ def test_truncated_judge_diagnostic_is_not_a_completed_second_verdict(tmp_path,m
  c=module.calc()['counts']
  assert c['judge_diagnostic_compared']==c['judge_diagnostic_disagreements']==1
  assert c['judge_review_unresolved']==1
+
+
+def test_completed_recovery_stays_counted_after_authoritative_state_merge(tmp_path,monkeypatch):
+ run=tmp_path/'run';(run/'logs').mkdir(parents=True);(run/'checks').mkdir()
+ retry=run/'checks/row0000-local-judge-retry.json';retry.write_text(json.dumps({'status':'scored','is_correct':True}))
+ (run/'status.json').write_text(json.dumps({'cases':{'row0000':{'agent_state':'terminal','judge_state':'scored','is_correct':True,'judge_recovery_path':str(retry)}}}))
+ monkeypatch.setattr(module,'RUN',run);monkeypatch.setattr(module,'R',tmp_path)
+ c=module.calc()['counts']
+ assert c['scored']==c['correct']==c['judge_recovered']==1
