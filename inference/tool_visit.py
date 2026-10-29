@@ -878,6 +878,10 @@ class Visit(BaseTool):
         return "[visit] Failed to read page after all retries."
 
     def html_readpage_jina(self, url: str) -> str:
+        from reader_singleflight import run
+        return run(url, lambda: self._html_readpage_jina_uncollapsed(url))
+
+    def _html_readpage_jina_uncollapsed(self, url: str) -> str:
         # jina_readpage already retries transient failures three times. Avoid
         # multiplying this by eight for an unavailable page in bounded mode.
         max_attempts = 1 if os.getenv('VISIT_READER_BOUNDED_RETRIES', '').lower() == 'true' else 8
