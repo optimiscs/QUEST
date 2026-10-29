@@ -258,6 +258,7 @@ class Search(BaseTool):
                 "items": {
                     "type": "string"
                 },
+                "minItems": 1,
                 "description": "Array of query strings. Include multiple complementary search queries in a single call."
             },
         },

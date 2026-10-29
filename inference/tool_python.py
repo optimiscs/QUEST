@@ -93,14 +93,14 @@ def _get_sandbox_fusion_endpoints() -> List[str]:
 @register_tool('PythonInterpreter', allow_overwrite=True)
 class PythonInterpreter(BaseToolWithFileAccess):
     name = "PythonInterpreter"
-    description = 'Execute Python code in a sandboxed environment. Use this to run Python code and get the execution results.\n**Make sure to use print() for any output you want to see in the results.**\nFor code parameters, use placeholders first, and then put the code within <code></code> XML tags, such as:\n<tool_call>\n{"purpose": <detailed-purpose-of-this-tool-call>, "name": <tool-name>, "arguments": {"code": ""}}\n<code>\nHere is the code.\n</code>\n</tool_call>\n'
+    description = 'Execute Python code in a sandbox. Supply the complete program in code; print values to see output.'
 
     parameters = {
         "type": "object",
         "properties": {
             "code": {
                 "type": "string",
-                "description": "The Python code to execute. Must be provided within <code></code> XML tags. Remember to use print() statements for any output you want to see.",
+                "description": "The complete Python program to execute. Use print() for output.",
             }
         },
         "required": ["code"],

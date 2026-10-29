@@ -23,6 +23,45 @@ Supported benchmark launchers:
 | Mind2Web2 | `scripts/run_react_infer_m2w2.sh` | Set `DATASET` to your Mind2Web2 test file |
 | WideSearch | `scripts/run_react_infer_ws.sh` | `../evaluation/widesearch/widesearch_en_input.jsonl` |
 
+## Native vLLM tool calls
+
+Set `QUEST_NATIVE_TOOL_CALLS=true` for API-level `tools` / `tool_calls` instead
+of extracting JSON from assistant text. The BrowseComp 25% controller enables
+this for newly launched agents; other launchers retain their existing default.
+Set it to `false` to replay the legacy text protocol.
+
+For the installed vLLM 0.32.0 and Qwen3.5, serve with:
+
+```bash
+export VLLM_ENFORCE_STRICT_TOOL_CALLING=true
+# Add these flags to the existing vllm serve command:
+# --enable-auto-tool-choice --tool-call-parser qwen3_coder
+# --reasoning-parser qwen3 --tool-strict-level parameter
+```
+
+`start_retrieval_ab_4b.sh` includes these flags. Existing server processes must
+be restarted to pick up changes. Other model families need their matching
+parser and chat template; native mode is not enabled for the DeepSeek teacher
+transport. `auto` without strict decoding support is not a JSON guarantee.
+
+The tools use `search(query: string[])`, `visit(url: string[], goal: string)`,
+and `PythonInterpreter(code: string)`. Python code is inside the arguments,
+with no separate code tags. Calls are schema-validated before execution;
+invalid or truncated calls receive a paired tool error. Finalization uses
+`tool_choice="none"`. Trajectories and memory retain tool call IDs and results.
+The legacy tool-prompt profile is ignored in native mode.
+
+Check a running endpoint without calling external search/page/sandbox services:
+
+```bash
+workspace/env/bin/python inference/scripts/check_native_tools.py \
+  --base-url http://127.0.0.1:18210/v1 --model QWEN35-SFT10
+```
+
+This uses real model generations and explicitly synthetic tool results to
+check all three schemas, tool-result replay, and finalization. It does not
+measure benchmark accuracy or external service availability.
+
 ## Setup
 
 Complete the root-level environment setup first. Then configure external

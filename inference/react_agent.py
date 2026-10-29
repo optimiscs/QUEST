@@ -6,6 +6,7 @@ if _quest_repo not in _quest_sys.path:
     _quest_sys.path.append(_quest_repo)
 from contrib.deepseek_data.dsml import normalize_dsml
 import json5
+import native_tools
 import os
 import sys
 import re
@@ -177,6 +178,11 @@ def build_system_prompt(enable_python_tool: bool) -> str:
         prompt = BROWSECOMP_PLUS_SYSTEM_PROMPT
     else:
         prompt = SYSTEM_PROMPT
+    if native_tools.enabled():
+        visit_disabled = os.getenv('DISABLE_VISIT_TOOL', '').lower() in {'1', 'true', 'yes'}
+        if visit_disabled:
+            prompt = _apply_visit_disabled_text_overrides(prompt)
+        return native_tools.system_prompt(prompt, visit_disabled)
     if SCHOLAR_TOOL_ENABLED:
         prompt = prompt.replace("</tools>", f"{SCHOLAR_TOOL_PROMPT}</tools>")
     tool_prompt_profile = os.environ.get('QUEST_TOOL_PROMPT_PROFILE', '').strip()
@@ -743,7 +749,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             content = msg.get("content", "")
             if role == "user" and first_user_idx is None:
                 first_user_idx = i
-            if role == "user" and isinstance(content, str) and content.startswith(OBS_START) and content.rstrip().endswith("</tool_response>"):
+            if role == "tool" or (role == "user" and isinstance(content, str) and content.startswith(OBS_START) and content.rstrip().endswith("</tool_response>")):
                 tool_response_indices.append(i)
 
         if first_user_idx is None:
@@ -768,6 +774,10 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
             role = msg.get("role")
             content = msg.get("content", "")
+            if role == 'tool' and i != latest_tool_response_idx:
+                pruned_messages.append(dict(msg, content='[Earlier tool result omitted from context]'))
+                removed_tool_results += 1
+                continue
             if role == "user" and isinstance(content, str) and content.startswith(OBS_START) and content.rstrip().endswith("</tool_response>"):
                 if i == latest_tool_response_idx:
                     pruned_messages.append(copy.deepcopy(msg))
@@ -830,11 +840,8 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             events = []
             for msg in messages:
                 role = msg.get("role", "")
-                if role in ["user", "assistant"]:
-                    events.append({
-                        "role": role,
-                        "content": msg.get("content", "")
-                    })
+                if role in ["user", "assistant", "tool"]:
+                    events.append(copy.deepcopy(msg))
             
             # Call the condenser tool
             condenser_tool = TOOL_MAP.get("condenser")
@@ -996,8 +1003,10 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
         return None
 
-    def call_server(self, msgs, max_tries=10):
+    def call_server(self, msgs, max_tries=10, *, allow_tools=True):
 
+        if native_tools.enabled() and os.getenv("QUEST_DEEPSEEK_TEACHER") == "1":
+            raise ValueError("Native tool mode is configured for vLLM, not the legacy teacher transport")
         if os.getenv("QUEST_DEEPSEEK_TEACHER") == "1":
             client = OpenAI(api_key=os.environ["DEEPSEEK_API_KEY"], base_url=os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"), timeout=600.0)
             response = None
@@ -1045,17 +1054,29 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                     timeout=600.0,
                 )
                 max_tokens = int(os.getenv('LLM_MAX_TOKENS', '10000'))
+                tool_options = ({'tools': native_tools.tool_schemas(TOOL_MAP),
+                                 'tool_choice': 'auto' if allow_tools else 'none',
+                                 'parallel_tool_calls': False}
+                                if native_tools.enabled() else
+                                {'stop': ["\n<tool_response>", "<tool_response>"]})
                 chat_response = client.chat.completions.create(
                     model=tl.model,
-                    messages=msgs,
-                    stop=["\n<tool_response>", "<tool_response>"],
+                    messages=native_tools.prepare_messages(msgs) if native_tools.enabled() else msgs,
+                    **tool_options,
                     temperature=self.llm_generate_cfg.get('temperature', 0.6),
                     top_p=self.llm_generate_cfg.get('top_p', 0.95),
                     logprobs=True,
                     max_tokens=max_tokens,
                     presence_penalty=self.llm_generate_cfg.get('presence_penalty', 1.1)
                 )
-                content = chat_response.choices[0].message.content
+                choice = chat_response.choices[0]
+                if native_tools.enabled():
+                    content = native_tools.NativeResponse(choice.message, choice.finish_reason)
+                    if content or content.message.get("tool_calls"):
+                        tl.endpoint_failure_count = 0
+                        return content
+                else:
+                    content = choice.message.content
 
                 # OpenRouter provides API calling. If you want to use OpenRouter, you need to uncomment line 89 - 90.
                 # reasoning_content = "<think>\n" + chat_response.choices[0].message.reasoning.strip() + "\n</think>"
@@ -1107,7 +1128,10 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
     def count_tokens(self, messages):
         if self._tokenizer is None:
             self._tokenizer = AutoTokenizer.from_pretrained(self.llm_local_path)
-        full_prompt = self._tokenizer.apply_chat_template(messages, tokenize=False)
+        full_prompt = self._tokenizer.apply_chat_template(
+            native_tools.prepare_messages(messages, for_template=True) if native_tools.enabled() else messages,
+            tokenize=False,
+            **({"tools": native_tools.tool_schemas(TOOL_MAP)} if native_tools.enabled() else {}))
         tokens = self._tokenizer(full_prompt, return_tensors="pt")
         token_count = len(tokens["input_ids"][0])
 
@@ -1275,6 +1299,9 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
         if resume_enabled:
             messages = copy.deepcopy(resume_messages)
+            if native_tools.enabled():
+                # Keep old text trajectories as context, but replace their transport instructions.
+                messages[0] = {"role": "system", "content": system_prompt}
             if isinstance(data.get('resume_memory_state'),dict):
                 tl.memory_state=copy.deepcopy(data['resume_memory_state'])
             print(
@@ -1331,15 +1358,26 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             tl.context_threshold_triggered = False
             content = self.call_server(messages)   #todo!!raw initial answer; may contain URLs in tool calls
             print(f'Round {round}: {content}')
-            if '<tool_response>' in content:
+            if not native_tools.enabled() and '<tool_response>' in content:
                 pos = content.find('<tool_response>')
                 content = content[:pos]
-            assistant_msg = {"role": "assistant", "content": content.strip()}
+            assistant_msg = native_tools.assistant_message(content)
             messages.append(assistant_msg)
             tl.full_messages.append(copy.deepcopy(assistant_msg))  # Sync to the full message history
             
-            action_calls = visible_tool_calls(content)
-            if action_calls:
+            action_calls = (assistant_msg.get('tool_calls', []) if native_tools.enabled()
+                            else visible_tool_calls(content))
+            if native_tools.enabled() and action_calls:
+                for tool_message in native_tools.execute_calls(
+                        content, native_tools.tool_schemas(TOOL_MAP), self.custom_call_tool):
+                    messages.append(tool_message)
+                    tl.full_messages.append(copy.deepcopy(tool_message))
+            elif native_tools.enabled() and visible_tool_calls(content):
+                correction = {'role': 'user', 'content':
+                              'Use the API tool calling interface. Textual tool calls were not executed.'}
+                messages.append(correction)
+                tl.full_messages.append(copy.deepcopy(correction))
+            elif action_calls:
                 raw_tool_call = action_calls[-1].strip()
                 tool_name, tool_args, tool_error = self._normalize_tool_call(raw_tool_call)
 
@@ -1455,7 +1493,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 user_limit_msg = {"role": "user", "content": llm_call_limit_prompt}
                 messages.append(user_limit_msg)
                 tl.full_messages.append(copy.deepcopy(user_limit_msg))  # Sync to the full message history
-                content = self.call_server(messages) or ""
+                content = self.call_server(messages, allow_tools=False) or ""
                 final_assistant_msg = {"role": "assistant", "content": content.strip()}
                 messages.append(final_assistant_msg)
                 tl.full_messages.append(copy.deepcopy(final_assistant_msg))  # Sync to the full message history
@@ -1478,7 +1516,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                     format_msg = {"role": "user", "content": correction}
                     messages.append(format_msg)
                     tl.full_messages.append(copy.deepcopy(format_msg))
-                    content = self.call_server(messages) or ""
+                    content = self.call_server(messages, allow_tools=False) or ""
                     final_assistant_msg = {"role": "assistant", "content": content.strip()}
                     messages.append(final_assistant_msg)
                     tl.full_messages.append(copy.deepcopy(final_assistant_msg))
@@ -1522,7 +1560,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 user_limit_msg = {"role": "user", "content": token_limit_prompt}
                 messages.append(user_limit_msg)
                 tl.full_messages.append(copy.deepcopy(user_limit_msg))  # Sync to the full message history
-                content = self.call_server(messages)
+                content = self.call_server(messages, allow_tools=False)
                 final_assistant_msg = {"role": "assistant", "content": content.strip()}
                 messages.append(final_assistant_msg)
                 tl.full_messages.append(copy.deepcopy(final_assistant_msg))  # Sync to the full message history

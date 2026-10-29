@@ -9,4 +9,5 @@ export XDG_CACHE_HOME="$PWD/cache/xdg" CUDA_HOME="$PWD/env/lib/python3.12/site-p
 export PATH="$CUDA_HOME/bin:$PWD/env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
-exec ./env/bin/vllm serve "$PWD/models/Qwen3.5-4B" --served-model-name QWEN35-BASE --host 127.0.0.1 --port "$port" --language-model-only --tensor-parallel-size 1 --dtype bfloat16 --max-model-len 65536 --max-num-seqs 8 --gpu-memory-utilization 0.92 --disable-custom-all-reduce --enable-lora --max-lora-rank 16 --lora-modules QWEN35-SFT10="$PWD/sft-runs/quest4b-v095-four32g-qlora64k-10pct-final"
+export VLLM_ENFORCE_STRICT_TOOL_CALLING=true
+exec ./env/bin/vllm serve "$PWD/models/Qwen3.5-4B" --served-model-name QWEN35-BASE --host 127.0.0.1 --port "$port" --language-model-only --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 --tool-strict-level parameter --tensor-parallel-size 1 --dtype bfloat16 --max-model-len 65536 --max-num-seqs 8 --gpu-memory-utilization 0.92 --disable-custom-all-reduce --enable-lora --max-lora-rank 16 --lora-modules QWEN35-SFT10="$PWD/sft-runs/quest4b-v095-four32g-qlora64k-10pct-final"
