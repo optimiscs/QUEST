@@ -381,6 +381,7 @@ class MultiTurnReactAgent(FnCallAgent):
         
         num_llm_calls_available = MAX_LLM_CALL_PER_RUN
         round = 0
+        termination = 'maximum model calls reached'
         while num_llm_calls_available > 0:
             # Check whether time is reached
             if time.time() - start_time > 150 * 60:  # 150 minutes in seconds
@@ -532,9 +533,6 @@ class MultiTurnReactAgent(FnCallAgent):
                 if '<tool_call>' not in content and '</tool_call>' not in content:
                     termination = 'answer'
                     break
-            if num_llm_calls_available <= 0 and '<answer>' not in content:
-                messages[-1]['content'] = 'Sorry, the number of llm calls exceeds the limit.'
-
             max_tokens = 110 * 1024
             # Use API returned token count, if not available fallback to local calculation
             current_token_count = self.count_tokens(messages, token_count)
@@ -554,7 +552,8 @@ class MultiTurnReactAgent(FnCallAgent):
                 if '<answer>' in content and '</answer>' in content:
                     answer_text = messages[-1]['content'].split('<answer>')[1].split('</answer>')[0]
                     try:
-                        answer_json = json.loads(answer_text)
+                        # Some providers emit literal newlines in JSON strings.
+                        answer_json = json.loads(answer_text, strict=False)
                     except json.JSONDecodeError:
                         answer_json = answer_text
                     prediction = {
@@ -581,12 +580,23 @@ class MultiTurnReactAgent(FnCallAgent):
                 self.save_trajectory(result)
                 return result
 
-        termination = 'maximum model calls reached'
+        if termination == 'maximum model calls reached':
+            messages.append({'role': 'user', 'content': (
+                'The research turn limit has been reached. Do not call tools again. '
+                'Use the research above to finish the task and return the required JSON '
+                'inside one <answer>...</answer> block.'
+            )})
+            content, _, cost_info = self.call_server(messages, planning_port)
+            for key in total_cost_info:
+                total_cost_info[key] += cost_info.get(key, 0)
+            messages.append({'role': 'assistant', 'content': content.strip()})
+            if '<answer>' in content and '</answer>' in content:
+                termination = 'answer at model call limit'
         content = messages[-1]['content']
         if '<answer>' in content and '</answer>' in content:
             answer_text = messages[-1]['content'].split('<answer>')[1].split('</answer>')[0]
             try:
-                answer_json = json.loads(answer_text)
+                answer_json = json.loads(answer_text, strict=False)
             except json.JSONDecodeError:
                 answer_json = answer_text
             prediction = {

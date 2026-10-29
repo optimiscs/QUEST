@@ -365,6 +365,14 @@ async def run_single_iteration(iteration_id, subcategory_counts,
                 executor,
                 run_agent
             )
+
+            prediction = result.get('prediction', {}).get('json') if isinstance(result, dict) else None
+            required = ('conceptual_breadth', 'logical_nesting', 'exploration', 'proposed_question')
+            if not isinstance(prediction, dict) or any(
+                not isinstance(prediction.get(key), str) or not prediction[key].strip()
+                for key in required
+            ):
+                raise ValueError(f'Iteration {iteration_id + 1} did not produce a valid proposed question')
             
             print(f"Result: {result}")
             print("-" * 50)
@@ -381,7 +389,9 @@ async def main():
     num_iterations = int(os.getenv("QUEST_SMOKE_TASKS", "10"))
     
     # Concurrency control: use Semaphore to limit the number of workers running simultaneously
-    workers = 1  # Can be modified as needed
+    workers = int(os.getenv("QUEST_WORKERS", "1"))
+    if num_iterations < 1 or workers < 1:
+        raise ValueError("QUEST_SMOKE_TASKS and QUEST_WORKERS must be positive")
     
     # Create thread pool executor
     global executor
@@ -461,6 +471,8 @@ async def main():
 if __name__ == "__main__":
     try:
         results = asyncio.run(main())
+        if any(isinstance(result, Exception) for result in results):
+            raise SystemExit(1)
     finally:
         # Shutdown thread pool executor
         if executor is not None:

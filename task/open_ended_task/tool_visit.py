@@ -565,7 +565,7 @@ class Visit(BaseTool):
                         return error_info
                     raise ValueError(error_info)
             except requests.exceptions.RequestException as e:
-                error_info = f"[visit] Network error: {str(e)}"
+                error_info = f"[visit] Error: Network error: {str(e)}"
                 print(f"[visit] Request exception: {error_info}")
                 if attempt == max_retries - 1:
                     return error_info
@@ -581,18 +581,15 @@ class Visit(BaseTool):
 
     def html_readpage_jina(self, url: str) -> str:
         max_attempts = 8
-        last_error = None
         for attempt in range(max_attempts):
             content = self.jina_readpage(url)
             service = "jina"     
             print(service)
             if content and content.startswith("[visit] Error"):
-                last_error = content
-                continue
+                # jina_readpage has already exhausted its retries for this URL.
+                return content
             if content and not content.startswith("[visit] Failed") and content != "[visit] Empty content." and not content.startswith("[document_parser]"):
                 return content
-        if last_error:
-            return last_error
         return "[visit] Failed to read page after all retries."
 
     def readpage_jina(self, url: str, goal: str) -> str:
