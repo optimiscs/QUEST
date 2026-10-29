@@ -1150,6 +1150,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 result["resume_start_num_rounds"] = resume_num_rounds
                 result["resume_previous_termination"] = data.get("resume_previous_termination")
                 result["resume_previous_prediction"] = data.get("resume_previous_prediction")
+                result["resume_memory_state_restored"] = isinstance(data.get('resume_memory_state'),dict)
             return result
 
         # Save the current question for trajectory persistence(thread-local)
@@ -1274,6 +1275,8 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
         if resume_enabled:
             messages = copy.deepcopy(resume_messages)
+            if isinstance(data.get('resume_memory_state'),dict):
+                tl.memory_state=copy.deepcopy(data['resume_memory_state'])
             print(
                 f"[Resume] Continuing from saved messages: "
                 f"message_count={len(messages)}, start_num_rounds={resume_num_rounds}, "
