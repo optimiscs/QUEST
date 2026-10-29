@@ -33,8 +33,8 @@ def load_ground_truth(jsonl_path: Path) -> Dict[str, Dict[str, str]]:
 def create_judge_prompt(question: str, response: str, correct_answer: str) -> str:
     return GRADER_TEMPLATE.format(
         question=question,
-        answer=response,
-        ground_truth_answer=correct_answer,
+        response=response,
+        correct_answer=correct_answer,
     )
 
 
@@ -176,7 +176,7 @@ def calib_err(confidence, correct, p="2", beta=100):
 
     cerr = 0
     total_examples = len(confidence)
-    for i in range(len(bins) - 1):
+    for i in range(len(bins)):
         bin_confidence = confidence[bins[i][0] : bins[i][1]]
         bin_correct = correct[bins[i][0] : bins[i][1]]
         num_examples_in_bin = len(bin_confidence)
@@ -429,7 +429,7 @@ def main():
     )
     parser.add_argument(
         "--qrel_evidence",
-        default="topics-qrels/qrel_evidence.txt",
+        default=str(Path(__file__).resolve().parent.parent / "topics-qrels/qrel_evidence.txt"),
         help="Path to qrel positives file",
     )
     parser.add_argument(
@@ -456,6 +456,8 @@ def main():
     ground_truth = load_ground_truth(gt_path)
 
     qrel_evidence_path = Path(args.qrel_evidence)
+    if not qrel_evidence_path.is_file():
+        raise FileNotFoundError(f"Evidence qrels not found: {qrel_evidence_path}")
 
     print("Loading qrel evidence")
     qrel_evidence = load_qrel_data(qrel_evidence_path)
@@ -525,9 +527,8 @@ def main():
         is_completed = run_data["status"] == "completed"
         retrieved_docids_set = set(run_data.get("retrieved_docids", []))
         positives_for_query = qrel_evidence.get(str(query_id), [])
-        retrieval_recall = len(
-            retrieved_docids_set.intersection(set(positives_for_query))
-        ) / float(len(positives_for_query))
+        retrieval_recall = (len(retrieved_docids_set.intersection(set(positives_for_query))) / float(len(positives_for_query))
+                            if positives_for_query and run_data.get('retrieval_trace', {}).get('complete', True) else None)
 
         response = ""
         if (
@@ -598,10 +599,10 @@ def main():
                 chat_template_kwargs={"enable_thinking": False},
             )
         except Exception as e:
-            print(f"Error running vLLM batch {i}//{args.batch_size}: {e}")
-            continue
+            print(f"Error running vLLM batch {i}//{args.batch_size}: {type(e).__name__}")
+            outputs = []  # Keep every item as an unscored result.
 
-        for item, out in zip(batch, outputs or []):
+        for item, out in zip(batch, list(outputs or []) + [None] * max(0, len(batch) - len(outputs or []))):
             judge_text = ""
             try:
                 if getattr(out, "outputs", None):
@@ -611,9 +612,8 @@ def main():
 
             judge_result = parse_judge_response(judge_text)
             cited_docids = extract_citations_from_response(item["response"])
-            citation_metrics_positives = compute_citation_metrics(
-                cited_docids, qrel_evidence.get(str(item["query_id"]), [])
-            )
+            positives = qrel_evidence.get(str(item["query_id"]), [])
+            citation_metrics_positives = compute_citation_metrics(cited_docids, positives) if positives else None
 
             result = {
                 "json_path": str(item["json_path"]),
@@ -691,12 +691,12 @@ def main():
         print(
             f"Warning: {len(confidences)} confidences in total, not enough to calculate calibration error (need at least 100)"
         )
-        calibration_error = 0.0
+        calibration_error = None
 
     retrieval_recalls = [
         r.get("retrieval", {}).get("recall", 0.0)
         for r in all_results
-        if qrel_evidence.get(str(r.get("query_id")), [])
+        if qrel_evidence.get(str(r.get("query_id")), []) and isinstance(r.get('retrieval', {}).get('recall'), (int, float))
     ]
     retrieval_recall_avg = (
         float(np.mean(retrieval_recalls)) if len(retrieval_recalls) > 0 else None
@@ -706,8 +706,9 @@ def main():
     correct_count = sum(
         1 for r in all_results if r.get("judge_result", {}).get("correct", False)
     )
-    accuracy_fraction = (correct_count / total) if total else 0.0
-    accuracy_percent = round(accuracy_fraction * 100.0, 2)
+    unscored_count = sum(1 for r in all_results if not isinstance((r.get('judge_result') or {}).get('correct'), bool) or (r.get('judge_result') or {}).get('parse_error'))
+    accuracy_fraction = (correct_count / total) if total and not unscored_count else None
+    accuracy_percent = round(accuracy_fraction * 100.0, 2) if accuracy_fraction is not None else None
     recall_percent = (
         round(retrieval_recall_avg * 100.0, 2)
         if isinstance(retrieval_recall_avg, (int, float))
@@ -722,7 +723,8 @@ def main():
     per_query_metrics = []
     for r in all_results:
         qid = r.get("query_id")
-        correct_flag = bool(r.get("judge_result", {}).get("correct", False))
+        judge = r.get('judge_result') or {}
+        correct_flag = judge.get('correct') if not judge.get('parse_error') and isinstance(judge.get('correct'), bool) else None
         recall_val = r.get("retrieval", {}).get("recall", None)
         recall_val_percent = (
             round(recall_val * 100.0, 2)
@@ -780,13 +782,15 @@ def main():
         else 0.0
     )
     coverage_percent = round(citation_coverage * 100.0, 2)
-    precision_percent = round(precision_avg * 100.0, 2)
-    recall_citation_percent = round(recall_avg * 100.0, 2)
+    evidence_complete = all(qrel_evidence.get(str(r.get('query_id')), []) for r in all_results)
+    precision_percent = round(precision_avg * 100.0, 2) if evidence_complete else None
+    recall_citation_percent = round(recall_avg * 100.0, 2) if evidence_complete else None
 
     summary_path = output_dir / "evaluation_summary.json"
     summary = {
         "LLM": detected_model_name or "change me when submitting",
         "Accuracy (%)": accuracy_percent,
+        "Unscored": unscored_count,
         "Recall (%)": recall_percent,
         "avg_tool_stats": all_tool_counts,
         "Calibration Error (%)": calibration_err_percent,
@@ -797,7 +801,7 @@ def main():
     }
 
     print(f"Evaluated {total} responses:")
-    print(f"Accuracy: {accuracy_percent:.2f}%")
+    print(f"Accuracy: {accuracy_percent:.2f}%" if accuracy_percent is not None else f"Accuracy: N/A ({unscored_count} unscored)")
     print(
         "Recall: "
         + (
@@ -820,8 +824,8 @@ def main():
         f"- Responses with citations: {responses_with_citations}/{total_responses} ({coverage_percent:.2f}%)"
     )
     print(f"- Avg citations per response: {avg_citations_per_response:.2f}")
-    print(f"- Precision (avg): {precision_percent:.2f}%")
-    print(f"- Recall (avg): {recall_citation_percent:.2f}%")
+    print(f"- Precision (avg): {precision_percent:.2f}%" if precision_percent is not None else '- Precision (avg): N/A')
+    print(f"- Recall (avg): {recall_citation_percent:.2f}%" if recall_citation_percent is not None else '- Recall (avg): N/A')
 
     with summary_path.open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)

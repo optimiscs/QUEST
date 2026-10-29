@@ -2,7 +2,9 @@ import os
 from typing import Optional, Dict, Any
 import requests
 import logging
+import threading
 from litellm import completion
+from .jina_pool import JinaPool
 
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -166,25 +168,65 @@ class AIClient:
         except Exception as e:
             raise Exception(f"Failed to generate content with model {model_to_use}: {str(e)}")
 
+_jina_lock = threading.Lock()
+_jina_next_key = {}
+
+
 class WebScrapingJinaTool:
     def __init__(self, api_key: str = None):
-        self.api_key = api_key or os.environ.get("JINA_API_KEY")
-        if not self.api_key:
-            raise ValueError("Jina API key not provided! Please set JINA_API_KEY environment variable.")
+        # An explicitly provided key is an override; otherwise use the complete
+        # configured list, retaining compatibility with the singular variable.
+        configured = api_key if api_key is not None else os.environ.get("JINA_API_KEYS", "")
+        if not configured and api_key is None:
+            configured = os.environ.get("JINA_API_KEY", "")
+        self.keys = tuple(dict.fromkeys(k.strip() for k in configured.split(',') if k.strip()))
+        self.pool = JinaPool()
+        if not self.keys and not self.pool.pool.is_file():
+            raise ValueError("Jina API key not provided! Set JINA_API_KEYS or JINA_API_KEY.")
 
     def __call__(self, url: str) -> Dict[str, Any]:
         try:
             jina_url = f'https://r.jina.ai/{url}'
+            with _jina_lock:
+                start = _jina_next_key.get(self.keys, 0) % len(self.keys) if self.keys else 0
             headers = {
                 "Accept": "application/json",
-                'Authorization': self.api_key,
-                'X-Timeout': "60000",
+                'X-Timeout': "60",
                 "X-With-Generated-Alt": "true",
             }
-            response = requests.get(jina_url, headers=headers)
+            for offset in range(len(self.keys)):
+                index = (start + offset) % len(self.keys)
+                key = self.keys[index]
+                headers['Authorization'] = key if key.lower().startswith('bearer ') else f'Bearer {key}'
+                response = requests.get(jina_url, headers=headers, timeout=(10, 65))
+                if response.status_code != 402:
+                    break
+                with _jina_lock:
+                    if _jina_next_key.get(self.keys, 0) % len(self.keys) == index:
+                        _jina_next_key[self.keys] = (index + 1) % len(self.keys)
+            else:
+                # The regular config is exhausted. Fall back to the shared pool,
+                # whose state and locking are also used by the inference adapter.
+                attempted = {k.strip().removeprefix('Bearer ').removeprefix('bearer ') for k in self.keys}
+                if self.pool.pool.is_file():
+                    while True:
+                        selected = self.pool.choose(attempted)
+                        if selected is None:
+                            break
+                        index, key = selected
+                        attempted.add(key.strip().removeprefix('Bearer ').removeprefix('bearer '))
+                        headers['Authorization'] = key if key.lower().startswith('bearer ') else f'Bearer {key}'
+                        response = requests.get(jina_url, headers=headers, timeout=(10, 65))
+                        if response.status_code != 402:
+                            break
+                        self.pool.reject(index)
+                    if selected is None:
+                        return {'url': url, 'content': '', 'error': 'Jina Reader HTTP 402: all configured and pool keys rejected or exhausted', 'status_code': 402}
+                else:
+                    return {'url': url, 'content': '', 'error': 'Jina Reader HTTP 402: all configured keys rejected', 'status_code': 402}
 
             if response.status_code != 200:
-                raise Exception(f"Jina AI Reader Failed for {url}: {response.status_code}")
+                return {'url': url, 'content': '', 'error': f'Jina Reader HTTP {response.status_code}', 'status_code': response.status_code}
 
             response_dict = response.json()
 
@@ -197,17 +239,17 @@ class WebScrapingJinaTool:
             }
 
         except Exception as e:
-            logger.error(str(e))
+            logger.error('Jina Reader request failed: %s', type(e).__name__)
             return {
                 'url': url,
                 'content': '',
-                'error': str(e)
+                'error': f'Jina Reader request failed: {type(e).__name__}'
             }
         
-jina_tool = WebScrapingJinaTool()
-
 def scrape_url(url: str) -> Dict[str, Any]:
-    return jina_tool(url)
+    # RACE and the FACT statistics do not use web scraping. Require a Jina
+    # credential only when a citation actually needs to be fetched.
+    return WebScrapingJinaTool()(url)
 
 def call_model(user_prompt: str, model: str = FACT_Model) -> str:
     """
