@@ -870,6 +870,11 @@ class Visit(BaseTool):
                 if attempt == max_retries - 1:
                     return f"[visit] Error: Unexpected error: {str(e)}"
 
+            # Full jitter avoids synchronized retry bursts across workers. The
+            # final attempt and permanent failures return without sleeping.
+            delay_cap = min(8.0, 0.5 * (2 ** attempt))
+            time.sleep(random.uniform(0.0, delay_cap))
+
         return "[visit] Failed to read page after all retries."
 
     def html_readpage_jina(self, url: str) -> str:

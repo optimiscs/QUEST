@@ -50,3 +50,12 @@ def test_bounded_mode_is_opt_in_and_does_not_multiply_retries(monkeypatch):
  monkeypatch.setattr(tool_visit.requests,'get',get)
  assert 'HTTP 404' in visit.html_readpage_jina('https://example.test/missing')
  assert len(calls)==24
+
+
+def test_transient_errors_use_exponential_full_jitter(monkeypatch):
+ visit=reader(monkeypatch);calls=[];delays=[];responses=iter([503,503,200])
+ monkeypatch.setattr(tool_visit.requests,'get',lambda *a,**k: (calls.append(1) or SimpleNamespace(status_code=next(responses),text='page')))
+ monkeypatch.setattr(tool_visit.random,'uniform',lambda low,high: (delays.append((low,high)) or high))
+ monkeypatch.setattr(tool_visit.time,'sleep',lambda delay:None)
+ assert visit.html_readpage_jina('https://example.test/')=='page'
+ assert delays==[(0.0,0.5),(0.0,1.0)] and len(calls)==3
