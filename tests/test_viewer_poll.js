@@ -17,7 +17,7 @@ const context = {
  state, dom, document:{hidden:false}, console, Set,
  activeCase:()=>state.data.cases[state.index],
  $:()=>mainScroll, $$:()=>[],
- setupWorkspaceSwitcher:()=>{}, renderSidebarSummary:()=>{}, renderRunChrome:()=>{},
+ refreshWorkspaceStats:()=>{}, setupWorkspaceSwitcher:()=>{}, renderSidebarSummary:()=>{}, renderRunChrome:()=>{},
  renderTaskList:()=>{renders++},renderAllContent:()=>{},hydrateRow:()=>{},
  manifestPath:()=>'/manifest',
  fetch:async (url)=>{

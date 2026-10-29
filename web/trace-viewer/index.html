@@ -10,7 +10,7 @@
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="assets/fonts/manrope-500-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/ibm-plex-mono-400-normal.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="styles.css?v=17">
+  <link rel="stylesheet" href="styles.css?v=20">
 </head>
 <body data-site="en">
   <div class="app" id="app">
@@ -77,20 +77,29 @@
           <svg class="icon workspace-chevron"><use href="#i-chevron"/></svg>
         </button>
         <div class="workspace-menu" id="workspaceMenu" role="menu" aria-label="切换工作区" hidden>
-          <div class="workspace-menu-head">选择工作区文件夹</div>
-          <a class="workspace-option" href="./" data-site-option="en" role="menuitem">
-            <span class="workspace-option-icon"><svg class="icon"><use href="#i-folder"/></svg></span>
-            <span class="workspace-option-copy"><strong>16_Search-Agent</strong><small>原始轨迹 · trace-viewer</small></span>
-            <span class="workspace-option-check" aria-hidden="true"><svg class="icon"><use href="#i-check"/></svg></span>
-          </a>
-          <a class="workspace-option" href="trace-viewer-zh/" data-site-option="zh" role="menuitem">
-            <span class="workspace-option-icon"><svg class="icon"><use href="#i-folder"/></svg></span>
-            <span class="workspace-option-copy"><strong>16_Search-Agent-zh</strong><small>中文译文 · trace-viewer-zh</small></span>
-            <span class="workspace-option-check" aria-hidden="true"><svg class="icon"><use href="#i-check"/></svg></span>
-          </a>
-          <div class="workspace-menu-divider" id="datasetMenuDivider" hidden><span>数据集评估</span></div>
+          <div class="workspace-menu-head">
+            <span>工作区</span>
+            <span class="workspace-menu-note" title="目录与重命名保存在当前浏览器">本机</span>
+          </div>
+          <div class="workspace-fixed-list">
+            <a class="ws-fixed-row" href="./" data-site-option="en" role="menuitem">
+              <span class="ws-fixed-icon"><svg class="icon"><use href="#i-folder"/></svg></span>
+              <span class="ws-fixed-copy"><strong>16_Search-Agent</strong><small>原始轨迹 · trace-viewer</small></span>
+              <span class="ws-fixed-check" aria-hidden="true"><svg class="icon"><use href="#i-check"/></svg></span>
+            </a>
+            <a class="ws-fixed-row" href="trace-viewer-zh/" data-site-option="zh" role="menuitem">
+              <span class="ws-fixed-icon"><svg class="icon"><use href="#i-folder"/></svg></span>
+              <span class="ws-fixed-copy"><strong>16_Search-Agent-zh</strong><small>中文译文 · trace-viewer-zh</small></span>
+              <span class="ws-fixed-check" aria-hidden="true"><svg class="icon"><use href="#i-check"/></svg></span>
+            </a>
+          </div>
+          <div class="workspace-menu-divider" id="datasetMenuDivider">
+            <span>数据集评估</span>
+            <button class="ws-add-folder" type="button" data-create-folder aria-label="新建目录" title="新建目录">
+              <svg class="icon"><use href="#i-plus"/></svg><span>新建目录</span>
+            </button>
+          </div>
           <div class="workspace-dataset-options" id="datasetOptions"></div>
-          <div class="workspace-menu-foot"><span>当前站点</span><span id="workspaceFootSite">trace-viewer</span></div>
         </div>
       </div>
 
@@ -321,6 +330,9 @@
   </div>
 
   <svg class="svg-sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.3" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="18.7" cy="12" r="1.2" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4.4 19.6h3.5L19.4 8.1a2.5 2.5 0 0 0-3.5-3.5L4.4 16.1v3.5Z"/><path d="m13.7 6.9 3.4 3.4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.6"/><path d="M9.2 4.2v15.6M5.7 8.1h1.2M5.7 11h1.2"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M6.4 3.6h7.2l4.1 4.1V20.4H6.4V3.6Z"/><path d="M13.6 3.6v4.1h4.1M9.2 12h5.6M9.2 15.4h5.6"/></symbol>
@@ -349,6 +361,8 @@
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8.5 4.2h-4.3v4.3M15.5 4.2h4.3v4.3M8.5 19.8H4.2v-4.3M19.8 15.5v4.3h-4.3"/></symbol>
   </svg>
 
+  <div class="ws-action-menu" id="workspaceActionMenu" role="menu" aria-label="工作区操作" hidden></div>
+
   <dialog class="modal" id="modal" aria-labelledby="modalTitle">
     <div class="modal-shell">
       <div class="modal-head">
@@ -368,6 +382,6 @@
     <svg class="icon"><use href="#i-check"/></svg><span id="toastText">已完成</span>
   </div>
 
-  <script src="app.js?v=18"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>

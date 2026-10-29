@@ -13,6 +13,8 @@
     datasetMeta: null,
     dataUrl: "data/traces.json",
     taskFilter: "all",
+    workspaceStats: {},
+    workspaceStatsKey: "",
   };
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -35,6 +37,7 @@
     workspaceFootSite: $("#workspaceFootSite"),
     datasetMenuDivider: $("#datasetMenuDivider"),
     datasetOptions: $("#datasetOptions"),
+    workspaceActionMenu: $("#workspaceActionMenu"),
     breadcrumbWorkspace: $("#breadcrumbWorkspace"),
     breadcrumbBenchmark: $("#breadcrumbBenchmark"),
     modeModel: $("#modeModel"),
@@ -148,7 +151,8 @@
   }
 
   function formatSeconds(value, precise = false) {
-    const seconds = Number(value || 0);
+    if (value == null || !Number.isFinite(Number(value))) return "未记录";
+    const seconds = Number(value);
     if (seconds < 0.1) return "<0.1s";
     if (seconds < 10) return `${seconds.toFixed(1).replace(/\.0$/, "")}s`;
     if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -167,6 +171,7 @@
   }
 
   function formatAxis(value) {
+    if (value == null || !Number.isFinite(Number(value))) return "未记录";
     const seconds = Math.max(0, Math.round(Number(value || 0)));
     if (seconds < 3600) {
       return `${Math.floor(seconds / 60)}:${pad(seconds % 60)}`;
@@ -258,10 +263,13 @@
   }
 
   function caseState(caseData) {
+    if (caseData.interrupted) return { key: "stopped", label: "已中断" };
     if (caseData.inProgress && (state.data.run?.stopped || state.datasetMeta?.lifecycleOverride === "stopped")) return { key: "stopped", label: "已终止" };
     if (caseData.inProgress) return { key: "running", label: "进行中" };
     if (caseData.correct === true) return { key: "pass", label: "通过" };
     if (caseData.correct === false) return { key: "fail", label: "未通过" };
+    if (typeof caseData.score === "number" && Number.isFinite(caseData.score)) return { key: "scored", label: `已评分 ${caseData.score.toFixed(3)}` };
+    if (caseData.scoredDimensions) return { key: "scored", label: "已完成维度评分" };
     return { key: "error", label: "未评分或错误" };
   }
 
@@ -323,7 +331,7 @@
   function judgeTag(caseData, element) {
     if (!element) return;
     const status = caseState(caseData);
-    element.classList.remove("is-fail", "is-pass", "is-running", "is-stopped", "is-error");
+    element.classList.remove("is-fail", "is-pass", "is-running", "is-stopped", "is-error", "is-scored");
     element.classList.add(`is-${status.key}`);
     element.innerHTML = `<i></i>${status.label}`;
     element.title = caseStateDetail(caseData);
@@ -366,7 +374,7 @@
     let benchmarkLabel;
 
     if (meta) {
-      workspaceName = meta.label || meta.id || run.name || "数据集评估";
+      workspaceName = readWorkspaceLayout().names[meta.id] || meta.label || meta.id || run.name || "数据集评估";
       workspaceSub = meta.description || `${run.model || "QUEST-4B"} · ${run.benchmark || "Evaluation"}`;
       foot = meta.folder || meta.data || `datasets/${meta.id}`;
       benchmarkLabel = meta.benchmark || run.benchmark || "本次评估";
@@ -409,28 +417,309 @@
     updateWorkspaceLinks();
   }
 
+  const WORKSPACE_LAYOUT_KEY = "quest.trace.workspace-layout.v1";
+
+  function readWorkspaceLayout() {
+    try {
+      const raw = JSON.parse(window.localStorage.getItem(WORKSPACE_LAYOUT_KEY) || "{}");
+      return {
+        folders: raw.folders || {},
+        placements: raw.placements || {},
+        names: raw.names || {},
+        expanded: Array.isArray(raw.expanded) ? raw.expanded : [],
+      };
+    } catch (_) { return { folders: {}, placements: {}, names: {}, expanded: [] }; }
+  }
+
+  function saveWorkspaceLayout(layout) {
+    try { window.localStorage.setItem(WORKSPACE_LAYOUT_KEY, JSON.stringify(layout)); return true; }
+    catch (_) { showToast("无法保存工作区设置，请检查浏览器存储权限"); return false; }
+  }
+
+  function defaultWorkspaceFolder(item) {
+    return `auto:${item.group || item.benchmark || "其他评估"}`;
+  }
+
+  let workspaceActionTrigger = null;
+
+  function workspaceFolderTitle(id, layout = readWorkspaceLayout()) {
+    if (layout.folders[id]) return layout.folders[id];
+    return id.startsWith("auto:") ? id.slice(5) : "新目录";
+  }
+
+  function workspaceDatasetLabel(item, layout = readWorkspaceLayout()) {
+    return layout.names[item.id] || item.label || item.id;
+  }
+
+  function workspaceStatsFor(id) {
+    const raw = state.workspaceStats?.[id];
+    if (!raw || typeof raw !== "object") return null;
+    const total = Number(raw.total);
+    if (!Number.isFinite(total) || total <= 0) return null;
+    const pass = Math.max(0, Number(raw.pass) || 0);
+    const running = Math.max(0, Number(raw.running) || 0);
+    return { total, pass, running, other: Math.max(0, total - pass - running) };
+  }
+
+  function workspaceMetricsHTML(stats) {
+    return `<span class="ws-item-metrics" title="通过 ${stats.pass} · 进行中 ${stats.running} · 未通过/异常 ${stats.other}">
+      <span class="ws-metric is-pass" title="通过 ${stats.pass}"><i></i><b>${stats.pass}</b></span>
+      <span class="ws-metric is-running" title="进行中 ${stats.running}"><i></i><b>${stats.running}</b></span>
+      <span class="ws-metric is-error" title="未通过/异常 ${stats.other}"><i></i><b>${stats.other}</b></span>
+    </span>`;
+  }
+
+  function workspaceGroupPassHTML(items) {
+    let passed = 0;
+    let total = 0;
+    for (const item of items) {
+      const stats = workspaceStatsFor(item.id);
+      if (!stats) continue;
+      passed += stats.pass;
+      total += stats.total;
+    }
+    if (!total) return "";
+    return `<span class="ws-group-pass${passed ? "" : " is-zero"}" title="${items.length} 个运行 · ${total} 个任务 · ${passed} 个通过">${icon("check")}${passed}/${total}</span>`;
+  }
+
+  function workspaceDatasetRow(item, layout) {
+    const id = item.id;
+    const active = state.datasetId === id;
+    const label = workspaceDatasetLabel(item, layout);
+    const description = item.description || item.folder || `datasets/${id}`;
+    const href = `?dataset=${encodeURIComponent(id)}`;
+    return `<div class="ws-item-row${active ? " is-current" : ""}" draggable="true" data-workspace-drag="${escapeAttr(id)}" data-workspace-item="${escapeAttr(id)}">
+      <a class="ws-item" href="${escapeAttr(href)}" data-dataset-option="${escapeAttr(id)}" role="menuitem" draggable="false"${active ? ' aria-current="page"' : ""}>
+        <span class="ws-item-icon"><svg class="icon"><use href="#i-activity"/></svg></span>
+        <span class="ws-item-copy"><strong data-ws-dataset-name="${escapeAttr(id)}">${escapeHTML(label)}</strong><small>${escapeHTML(description)}</small>${workspaceStatsFor(id) ? workspaceMetricsHTML(workspaceStatsFor(id)) : ""}</span>
+        <span class="ws-item-check" aria-hidden="true"><svg class="icon"><use href="#i-check"/></svg></span>
+      </a>
+      <button class="ws-more" type="button" data-workspace-menu="dataset" data-workspace-id="${escapeAttr(id)}" aria-haspopup="menu" aria-label="${escapeAttr(label)} 的工作区操作" title="工作区操作">
+        <svg class="icon"><use href="#i-more"/></svg>
+      </button>
+    </div>`;
+  }
+
   function renderDatasetOptions() {
+    closeWorkspaceActionMenu();
     if (!dom.datasetOptions || !dom.datasetMenuDivider) return;
     const datasets = (state.manifest || []).filter((item) => item && item.id && item.visible !== false);
-    dom.datasetMenuDivider.hidden = datasets.length === 0;
-    if (!datasets.length) {
-      dom.datasetOptions.innerHTML = "";
-      return;
+    const layout = readWorkspaceLayout();
+    const expandedIds = new Set(Array.isArray(layout.expanded) ? layout.expanded : []);
+    const groupOrder = new Map();
+    for (const item of datasets) {
+      const id = defaultWorkspaceFolder(item);
+      if (!groupOrder.has(id)) groupOrder.set(id, groupOrder.size);
     }
-    dom.datasetOptions.innerHTML = datasets
-      .map((item) => {
-        const active = state.datasetId === item.id;
-        const href = siteLocale === "zh"
-          ? `?dataset=${encodeURIComponent(item.id)}`
-          : `?dataset=${encodeURIComponent(item.id)}`;
-        const description = item.description || item.folder || `datasets/${item.id}`;
-        return `<a class="workspace-option dataset-option${active ? " is-current" : ""}" href="${escapeAttr(href)}" data-dataset-option="${escapeAttr(item.id)}" role="menuitem"${active ? ' aria-current="page"' : ""}>
-          <span class="workspace-option-icon"><svg class="icon"><use href="#i-activity"/></svg></span>
-          <span class="workspace-option-copy"><strong>${escapeHTML(item.label || item.id)}</strong><small>${escapeHTML(description)}</small></span>
-          <span class="workspace-option-check" aria-hidden="true"><svg class="icon"><use href="#i-check"/></svg></span>
-        </a>`;
+    for (const id of Object.keys(layout.folders)) {
+      if (!groupOrder.has(id)) groupOrder.set(id, groupOrder.size);
+    }
+    const groups = new Map();
+    for (const item of datasets) {
+      const id = layout.placements[item.id] || defaultWorkspaceFolder(item);
+      if (!groups.has(id)) groups.set(id, []);
+      groups.get(id).push(item);
+    }
+    for (const id of Object.keys(layout.folders)) if (!groups.has(id)) groups.set(id, []);
+    const orderedGroups = [...groups.entries()].sort(([left], [right]) => {
+      return (groupOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (groupOrder.get(right) ?? Number.MAX_SAFE_INTEGER);
+    });
+    dom.datasetMenuDivider.hidden = false;
+    dom.datasetOptions.innerHTML = orderedGroups
+      .map(([id, items]) => {
+        const title = workspaceFolderTitle(id, layout);
+        const expanded = expandedIds.has(id);
+        const rows = items.map((item) => workspaceDatasetRow(item, layout)).join("");
+        return `<section class="ws-group${expanded ? "" : " is-collapsed"}" data-workspace-folder="${escapeAttr(id)}">
+          <div class="ws-group-head">
+            <button class="ws-group-toggle" type="button" data-workspace-toggle="${escapeAttr(id)}" aria-expanded="${String(expanded)}" title="${escapeAttr(expanded ? "收起" : "展开")} ${escapeAttr(title)}">
+              <svg class="icon ws-chevron"><use href="#i-chevron"/></svg>
+              <svg class="icon ws-group-icon"><use href="#i-folder"/></svg>
+              <span class="ws-group-name" data-ws-folder-name="${escapeAttr(id)}">${escapeHTML(title)}</span>
+              <span class="ws-group-count">${items.length}</span>
+              ${workspaceGroupPassHTML(items)}
+            </button>
+            <button class="ws-more" type="button" data-workspace-menu="folder" data-workspace-id="${escapeAttr(id)}" aria-haspopup="menu" aria-label="${escapeAttr(title)} 的目录操作" title="目录操作">
+              <svg class="icon"><use href="#i-more"/></svg>
+            </button>
+          </div>
+          <div class="ws-group-body"${expanded ? "" : " hidden"}>${rows || '<div class="ws-empty">暂无工作区，可拖入此目录</div>'}</div>
+        </section>`;
       })
       .join("");
+  }
+
+  function closeWorkspaceActionMenu(restoreFocus = false) {
+    if (!dom.workspaceActionMenu) return;
+    const trigger = workspaceActionTrigger;
+    dom.workspaceActionMenu.hidden = true;
+    dom.workspaceActionMenu.innerHTML = "";
+    delete dom.workspaceActionMenu.dataset.workspaceKind;
+    delete dom.workspaceActionMenu.dataset.workspaceId;
+    workspaceActionTrigger = null;
+    if (restoreFocus && trigger && trigger.isConnected) trigger.focus();
+  }
+
+  function openWorkspaceActionMenu(kind, id, trigger, point = null) {
+    if (!dom.workspaceActionMenu) return;
+    closeWorkspaceActionMenu();
+    const layout = readWorkspaceLayout();
+    let actions;
+    if (kind === "folder") {
+      const expanded = (layout.expanded || []).includes(id);
+      actions = [
+        { action: "rename", icon: "edit", label: "重命名目录" },
+        { action: "toggle", icon: "chevron", label: expanded ? "收起目录" : "展开目录" },
+      ];
+    } else {
+      const item = (state.manifest || []).find((entry) => entry.id === id);
+      if (!item) return;
+      actions = [
+        { action: "open", icon: "arrow-up-right", label: "打开工作区" },
+        { action: "rename", icon: "edit", label: "重命名" },
+      ];
+    }
+    dom.workspaceActionMenu.dataset.workspaceKind = kind;
+    dom.workspaceActionMenu.dataset.workspaceId = id;
+    dom.workspaceActionMenu.innerHTML = actions
+      .map((entry) => `<button class="ws-action-item" type="button" role="menuitem" data-ws-action="${entry.action}">${icon(entry.icon)}<span>${entry.label}</span></button>`)
+      .join("");
+    dom.workspaceActionMenu.hidden = false;
+    workspaceActionTrigger = trigger;
+    const width = dom.workspaceActionMenu.offsetWidth;
+    const height = dom.workspaceActionMenu.offsetHeight;
+    const rect = trigger.getBoundingClientRect();
+    let left;
+    let top;
+    if (point) {
+      left = point.x + 2;
+      top = point.y + 2;
+    } else {
+      left = rect.right - width;
+      top = rect.bottom + 4;
+    }
+    left = Math.min(Math.max(8, left), Math.max(8, window.innerWidth - width - 8));
+    if (top + height > window.innerHeight - 8) {
+      top = Math.max(8, (point ? point.y : rect.top) - height - 4);
+    }
+    top = Math.min(Math.max(8, top), Math.max(8, window.innerHeight - height - 8));
+    dom.workspaceActionMenu.style.left = `${Math.round(left)}px`;
+    dom.workspaceActionMenu.style.top = `${Math.round(top)}px`;
+    requestAnimationFrame(() => {
+      const first = $(".ws-action-item", dom.workspaceActionMenu);
+      first?.focus({ preventScroll: true });
+    });
+  }
+
+  function toggleWorkspaceFolder(id) {
+    const layout = readWorkspaceLayout();
+    const expanded = new Set(layout.expanded || []);
+    if (expanded.has(id)) expanded.delete(id);
+    else expanded.add(id);
+    layout.expanded = [...expanded];
+    if (saveWorkspaceLayout(layout)) renderDatasetOptions();
+  }
+
+  function startInlineRename(kind, id) {
+    closeWorkspaceActionMenu();
+    const layout = readWorkspaceLayout();
+    const isFolder = kind === "folder";
+    let host = null;
+    let initial = "";
+    if (isFolder) {
+      const group = $$(".ws-group", dom.datasetOptions).find((element) => element.dataset.workspaceFolder === id);
+      host = group?.querySelector(".ws-group-head") || null;
+      initial = workspaceFolderTitle(id, layout);
+    } else {
+      const row = $$("[data-workspace-item]", dom.datasetOptions).find((element) => element.dataset.workspaceItem === id);
+      const item = (state.manifest || []).find((entry) => entry.id === id);
+      if (row) {
+        host = row;
+        row.draggable = false;
+        initial = layout.names[id] || item?.label || id;
+      }
+    }
+    if (!host) return;
+    host.classList.add("is-renaming");
+    host.innerHTML = `<span class="ws-rename-icon">${icon(isFolder ? "folder" : "activity")}</span><input class="ws-inline-input" type="text" maxlength="${isFolder ? 80 : 120}" spellcheck="false" autocomplete="off" aria-label="${isFolder ? "重命名目录" : "重命名工作区"}">`;
+    const input = $(".ws-inline-input", host);
+    input.value = initial;
+    input.focus();
+    input.select();
+    let settled = false;
+    const finish = (commit) => {
+      if (settled) return;
+      settled = true;
+      const next = input.value.trim();
+      if (commit && next) {
+        const latest = readWorkspaceLayout();
+        if (isFolder) latest.folders[id] = next.slice(0, 80);
+        else latest.names[id] = next.slice(0, 120);
+        saveWorkspaceLayout(latest);
+        showToast(isFolder ? "目录已重命名" : "工作区已重命名");
+      }
+      if (isFolder) renderDatasetOptions();
+      else setupWorkspaceSwitcher();
+    };
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finish(true);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener("blur", () => finish(true));
+    input.addEventListener("click", (event) => event.stopPropagation());
+  }
+
+  function beginCreateFolder() {
+    closeWorkspaceActionMenu();
+    if (!dom.datasetOptions) return;
+    const existing = $(".ws-create-row", dom.datasetOptions);
+    if (existing) {
+      $(".ws-inline-input", existing)?.focus();
+      return;
+    }
+    const row = document.createElement("div");
+    row.className = "ws-create-row";
+    row.innerHTML = `<span class="ws-rename-icon">${icon("folder")}</span><input class="ws-inline-input" type="text" maxlength="80" spellcheck="false" autocomplete="off" placeholder="目录名称" aria-label="新目录名称">`;
+    dom.datasetOptions.appendChild(row);
+    const input = $(".ws-inline-input", row);
+    row.scrollIntoView({ block: "nearest" });
+    input.focus();
+    let settled = false;
+    const finish = (commit) => {
+      if (settled) return;
+      settled = true;
+      const name = input.value.trim();
+      row.remove();
+      if (!commit || !name) return;
+      const layout = readWorkspaceLayout();
+      const id = `custom:${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      layout.folders[id] = name.slice(0, 80);
+      layout.expanded = [...new Set([...(layout.expanded || []), id])];
+      if (saveWorkspaceLayout(layout)) {
+        renderDatasetOptions();
+        const group = $$(".ws-group", dom.datasetOptions).find((element) => element.dataset.workspaceFolder === id);
+        group?.scrollIntoView({ block: "nearest" });
+        showToast("目录已创建");
+      }
+    };
+    input.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Enter") {
+        event.preventDefault();
+        finish(true);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener("blur", () => finish(false));
+    input.addEventListener("click", (event) => event.stopPropagation());
   }
 
   function updateWorkspaceLinks() {
@@ -461,14 +750,47 @@
     }
   }
 
+  let workspaceStatsInFlight = false;
+
+  async function refreshWorkspaceStats() {
+    if (workspaceStatsInFlight || document.hidden) return;
+    workspaceStatsInFlight = true;
+    try {
+      const response = await fetch("/api/workspace-status", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const next = payload && payload.datasets && typeof payload.datasets === "object" ? payload.datasets : null;
+      if (!next) return;
+      const signature = JSON.stringify(next);
+      if (signature === state.workspaceStatsKey) return;
+      state.workspaceStats = next;
+      state.workspaceStatsKey = signature;
+      if (dom.workspaceMenu && dom.workspaceMenu.hidden) renderDatasetOptions();
+    } catch (_) {
+      // Optional endpoint: static hosting still renders the workspace tree without metrics.
+    } finally {
+      workspaceStatsInFlight = false;
+    }
+  }
+
+  function fitWorkspaceMenu() {
+    if (!dom.workspaceMenu || !dom.workspaceTrigger) return;
+    const bottom = dom.workspaceTrigger.getBoundingClientRect().bottom;
+    const available = Math.max(180, window.innerHeight - bottom - 14);
+    dom.workspaceMenu.style.maxHeight = `${Math.min(560, available)}px`;
+  }
+
   function openWorkspaceMenu() {
     if (!dom.workspaceMenu || !dom.workspaceTrigger) return;
-    closeWorkspaceMenu();
+    closeWorkspaceActionMenu();
+    renderDatasetOptions();
     dom.workspaceMenu.hidden = false;
+    fitWorkspaceMenu();
     dom.workspaceTrigger.setAttribute("aria-expanded", "true");
   }
 
   function closeWorkspaceMenu() {
+    closeWorkspaceActionMenu();
     if (!dom.workspaceMenu || !dom.workspaceTrigger) return;
     dom.workspaceMenu.hidden = true;
     dom.workspaceTrigger.setAttribute("aria-expanded", "false");
@@ -597,6 +919,13 @@
   }
 
   function renderDurationChart(c) {
+    if (c.timingAvailable === false) {
+      dom.chartTitle.textContent = "执行时间线";
+      dom.chartSub.textContent = "时间未记录";
+      dom.chartLegend.innerHTML = "";
+      dom.timelineVisual.innerHTML = "<div class=\"log-empty\">此轨迹未记录完整的步骤耗时，无法绘制时间线。</div>";
+      return;
+    }
     const total = c.durationSeconds;
     const modelBars = c.steps.map((step) => makeBar(step, step.modelStart, step.model_seconds, total, "model", "assistant"));
     const searchBars = c.steps
@@ -627,7 +956,7 @@
     const cells = c.steps
       .map((step) => {
         const kind = step.kind === "answer" ? "answer" : step.kind;
-        const label = `第 ${step.n} 轮 · ${step.label} · ${formatSeconds(step.model_seconds + step.tool_seconds)}`;
+        const label = `第 ${step.n} 轮 · ${step.label} · ${formatSeconds(step.model_seconds == null || step.tool_seconds == null ? null : step.model_seconds + step.tool_seconds)}`;
         return `<button type="button" class="round-cell ${kind}" data-chart-step="${step.n}" data-chart-role="assistant" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}"></button>`;
       })
       .join("");
@@ -651,6 +980,13 @@
   }
 
   function renderCallsChart(c) {
+    if (c.timingAvailable === false) {
+      dom.chartTitle.textContent = "工具调用";
+      dom.chartSub.textContent = `${number(c.stats.searchCalls + c.stats.readCalls + c.stats.computeCalls)} 次调用 · 时间未记录`;
+      dom.chartLegend.innerHTML = "";
+      dom.timelineVisual.innerHTML = "<div class=\"log-empty\">此轨迹未记录工具调用耗时，无法绘制时间线。</div>";
+      return;
+    }
     const total = c.durationSeconds;
     const searchBars = c.steps
       .filter((step) => step.kind === "search")
@@ -841,7 +1177,7 @@
                 <div class="page-detail-head">
                   <div>
                     <a class="page-detail-title" href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(page.title)}</a>
-                    <div class="page-detail-domain">${escapeHTML(page.domain)} · 读取 ${formatSeconds(page.readerSeconds || page.summarySeconds || 0)}</div>
+                    <div class="page-detail-domain">${escapeHTML(page.domain)} · 读取 ${formatSeconds(page.readerSeconds ?? page.summarySeconds ?? null)}</div>
                   </div>
                   <a class="page-detail-link" href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer" aria-label="在新窗口打开来源">${icon("arrow-up-right")}</a>
                 </div>
@@ -915,7 +1251,7 @@
   }
 
   function overviewStateLabel(status) {
-    return {running: "评估进行中", pass: "研究完成 · 通过", fail: "研究完成 · 未通过", stopped: "评估已终止", error: "未评分或评分错误"}[status.key] || "状态未知";
+    return {running: "评估进行中", pass: "研究完成 · 通过", fail: "研究完成 · 未通过", scored: "研究完成 · 已评分", stopped: "评估已终止", error: "未评分或评分错误"}[status.key] || "状态未知";
   }
 
   function renderOverview() {
@@ -1188,7 +1524,7 @@
         <div class="info-row"><span>检索请求</span><b>${run.searchCalls}</b></div>
         ${datasetRow}
       </div>
-      <p class="info-note"><b>读取方式</b> · 页面由 ${escapeHTML(run.model)} 的原生事件日志重建，展示的是实际发生的模型调用、搜索、读取、计算与结论。<br><br><b>评审边界</b> · 每个任务仅执行一次 rollout。评审通过仅代表 judge 判定，不等同于基准准确率或独立可复现结论。<br><br><b>来源暴露审计</b> · 本批 ${exposed} 条轨迹被标记为存在基准来源线索，其中 ${confirmed} 条确认出现答案暴露；另有 ${unaudited} 条尚未审计。这些标记保留在任务概览与轨迹中。${(siteLocale === "zh" && !state.datasetId) ? "<br><br><b>中文版本</b> · 问题、推理、网页摘要与完整回答经机器翻译；检索式、URL、工具代码/输出和答案字面量保留原文，推理文本中的代码片段可能随翻译轻微改写。" : ""}</p>`
+      <p class="info-note"><b>读取方式</b> · ${state.datasetId?.startsWith("seven-bench-10pct-20261028-r1-") ? "轨迹由模型请求快照和已保存结果重建；部分进行中步骤可能尚未写入。没有可靠的逐步耗时，页面显示为未记录。早期部分搜索和 Python 调用曾受工具故障影响。" : `页面由 ${escapeHTML(run.model)} 的原生事件日志重建，展示的是实际发生的模型调用、搜索、读取、计算与结论。`}<br><br><b>评审边界</b> · 每个任务仅执行一次 rollout。评审通过仅代表 judge 判定，不等同于基准准确率或独立可复现结论。<br><br><b>来源暴露审计</b> · 本批 ${exposed} 条轨迹被标记为存在基准来源线索，其中 ${confirmed} 条确认出现答案暴露；另有 ${unaudited} 条尚未审计。这些标记保留在任务概览与轨迹中。${(siteLocale === "zh" && !state.datasetId) ? "<br><br><b>中文版本</b> · 问题、推理、网页摘要与完整回答经机器翻译；检索式、URL、工具代码/输出和答案字面量保留原文，推理文本中的代码片段可能随翻译轻微改写。" : ""}</p>`
     );
   }
 
@@ -1300,6 +1636,28 @@
     });
 
     dom.workspaceMenu.addEventListener("click", (event) => {
+      const create = event.target.closest("[data-create-folder]");
+      if (create) {
+        event.preventDefault();
+        event.stopPropagation();
+        beginCreateFolder();
+        return;
+      }
+      const toggle = event.target.closest("[data-workspace-toggle]");
+      if (toggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeWorkspaceActionMenu();
+        toggleWorkspaceFolder(toggle.dataset.workspaceToggle);
+        return;
+      }
+      const more = event.target.closest("[data-workspace-menu]");
+      if (more) {
+        event.preventDefault();
+        event.stopPropagation();
+        openWorkspaceActionMenu(more.dataset.workspaceMenu, more.dataset.workspaceId, more);
+        return;
+      }
       const datasetOption = event.target.closest("[data-dataset-option]");
       if (datasetOption) {
         if (datasetOption.dataset.datasetOption === state.datasetId) {
@@ -1315,6 +1673,87 @@
         closeWorkspaceMenu();
       }
     });
+
+    dom.workspaceActionMenu.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-ws-action]");
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const kind = dom.workspaceActionMenu.dataset.workspaceKind;
+      const id = dom.workspaceActionMenu.dataset.workspaceId;
+      if (!kind || !id) return;
+      const action = button.dataset.wsAction;
+      if (action === "open") {
+        closeWorkspaceMenu();
+        window.location.href = `?dataset=${encodeURIComponent(id)}`;
+        return;
+      }
+      closeWorkspaceActionMenu();
+      if (action === "rename") startInlineRename(kind, id);
+      else if (action === "toggle") toggleWorkspaceFolder(id);
+    });
+
+    dom.datasetOptions.addEventListener("contextmenu", (event) => {
+      const row = event.target.closest("[data-workspace-item]");
+      const group = event.target.closest("[data-workspace-folder]");
+      if (!row && !group) return;
+      event.preventDefault();
+      if (row) {
+        const trigger = row.querySelector(".ws-more") || row;
+        openWorkspaceActionMenu("dataset", row.dataset.workspaceItem, trigger, { x: event.clientX, y: event.clientY });
+      } else {
+        const trigger = group.querySelector(".ws-group-head .ws-more") || group;
+        openWorkspaceActionMenu("folder", group.dataset.workspaceFolder, trigger, { x: event.clientX, y: event.clientY });
+      }
+    });
+
+    dom.datasetOptions.addEventListener("dragstart", (event) => {
+      const row = event.target.closest("[data-workspace-drag]");
+      if (!row || !event.dataTransfer) return;
+      if (event.target.closest("button, input")) {
+        event.preventDefault();
+        return;
+      }
+      event.dataTransfer.setData("text/plain", row.dataset.workspaceDrag);
+      event.dataTransfer.effectAllowed = "move";
+      row.classList.add("is-dragging");
+      closeWorkspaceActionMenu();
+    });
+    dom.datasetOptions.addEventListener("dragend", (event) => {
+      event.target.closest("[data-workspace-drag]")?.classList.remove("is-dragging");
+      $$(".ws-group.is-drop-target", dom.datasetOptions).forEach((element) => element.classList.remove("is-drop-target"));
+    });
+    dom.datasetOptions.addEventListener("dragover", (event) => {
+      const folder = event.target.closest("[data-workspace-folder]");
+      if (!folder || !event.dataTransfer) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      $$(".ws-group.is-drop-target", dom.datasetOptions).forEach((element) => {
+        if (element !== folder) element.classList.remove("is-drop-target");
+      });
+      folder.classList.add("is-drop-target");
+    });
+    dom.datasetOptions.addEventListener("dragleave", (event) => {
+      const folder = event.target.closest("[data-workspace-folder]");
+      if (!folder || folder.contains(event.relatedTarget)) return;
+      folder.classList.remove("is-drop-target");
+    });
+    dom.datasetOptions.addEventListener("drop", (event) => {
+      const folder = event.target.closest("[data-workspace-folder]");
+      if (!folder || !event.dataTransfer) return;
+      event.preventDefault();
+      const id = event.dataTransfer.getData("text/plain");
+      if (!state.manifest.some((item) => item.id === id)) return;
+      const folderId = folder.dataset.workspaceFolder;
+      const layout = readWorkspaceLayout();
+      layout.placements[id] = folderId;
+      layout.expanded = [...new Set([...(layout.expanded || []), folderId])];
+      if (saveWorkspaceLayout(layout)) {
+        renderDatasetOptions();
+        showToast(`已移动到 ${workspaceFolderTitle(folderId)}`);
+      }
+    });
+    dom.workspaceMenu.addEventListener("scroll", () => closeWorkspaceActionMenu(), { passive: true });
 
     dom.taskList.addEventListener("click", (event) => {
       const button = event.target.closest("[data-case]");
@@ -1417,10 +1856,18 @@
     });
 
     document.addEventListener("click", (event) => {
+      if (event.target.closest("#workspaceActionMenu")) return;
+      if (event.target.closest("[data-workspace-menu]")) return;
+      closeWorkspaceActionMenu();
       if (!event.target.closest("#workspaceSwitcher")) closeWorkspaceMenu();
     });
 
     document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && dom.workspaceActionMenu && !dom.workspaceActionMenu.hidden) {
+        event.preventDefault();
+        closeWorkspaceActionMenu(true);
+        return;
+      }
       if (event.key === "Escape" && !dom.workspaceMenu.hidden) {
         closeWorkspaceMenu();
         dom.workspaceTrigger.focus();
@@ -1452,6 +1899,8 @@
     });
 
     window.addEventListener("resize", () => {
+      closeWorkspaceActionMenu();
+      if (!dom.workspaceMenu.hidden) fitWorkspaceMenu();
       if (!isMobile()) closeSidebar();
     });
   }
@@ -1485,6 +1934,7 @@
   let pollInFlight = false;
   async function pollWorkspace() {
     if (pollInFlight || !state.data || document.hidden) return;
+    refreshWorkspaceStats();
     pollInFlight = true;
     try {
       // A failed manifest read must not erase the current workspace list.
@@ -1528,6 +1978,7 @@
     bindEvents();
     try {
       state.manifest = await loadWorkspaceManifest();
+      refreshWorkspaceStats();
       const requestedDataset = new URLSearchParams(window.location.search).get("dataset");
       let datasetMeta = null;
       let dataUrl = "data/traces.json";
