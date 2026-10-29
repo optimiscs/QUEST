@@ -1,1 +1,0 @@
-../trace-viewer/SCHEMA.md

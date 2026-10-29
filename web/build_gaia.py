@@ -1,9 +1,10 @@
 """Build an atomically replaceable viewer dataset from completed native spans."""
-import argparse,collections,datetime,json,os,re,time
+import argparse,collections,datetime,json,os,re,sys,time
 from pathlib import Path
 from urllib.parse import urlparse
 
 REPO=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(REPO));from inference.visible_judge_state import apply_visible_judgment
 parser=argparse.ArgumentParser(description='Build a fresh viewer dataset from recorded GAIA spans; does not run inference or scoring.')
 parser.add_argument('--run-root',type=Path,required=True)
 parser.add_argument('--output-dir',type=Path,required=True)
@@ -78,6 +79,7 @@ for i in range(cli.requested_cases):
    if receipt.get('status')=='scored' and isinstance(receipt.get('is_correct'),bool):
     state.update(judge_state='scored',is_correct=receipt['is_correct'],judgment='BrowseComp 官方判分提示；本地 4B 裁判格式重试')
   except (OSError,ValueError,TypeError):pass
+ if cli.benchmark.lower()=='browsecomp':state,_=apply_visible_judgment(root,case,state)
  receipt_path=root/'checks'/f'{case}-score-receipt.json'
  if receipt_path.exists():
   try:

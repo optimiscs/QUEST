@@ -1,0 +1,27 @@
+{
+  "name": "quest-viewer-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "generate": "openapi-typescript ../backend/openapi.json -o src/api/generated.ts",
+    "test": "vitest run src",
+    "test:e2e": "playwright test",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.56.0",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "openapi-typescript": "^7.10.0",
+    "pixelmatch": "^8.0.0",
+    "pngjs": "^7.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.0"
+  }
+}

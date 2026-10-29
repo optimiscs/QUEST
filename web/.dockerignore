@@ -1,0 +1,9 @@
+**/node_modules
+**/.venv
+**/dist
+**/__pycache__
+trace-viewer
+trace-viewer-zh
+trace-viewer-runtime
+.backups
+.env

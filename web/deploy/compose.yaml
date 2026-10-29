@@ -1,0 +1,50 @@
+name: quest-viewer
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: quest
+      POSTGRES_DB: quest_viewer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U quest -d quest_viewer']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment: &backend-env
+      VIEWER_DATABASE_URL: postgresql+psycopg://quest:${POSTGRES_PASSWORD}@db:5432/quest_viewer
+    command: [.venv/bin/alembic, upgrade, head]
+    depends_on:
+      db:
+        condition: service_healthy
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment: *backend-env
+    ports: ['127.0.0.1:6080:6080']
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  importer:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment: *backend-env
+    command: [.venv/bin/quest-viewer, watch, --site, /sources/trace-viewer]
+    volumes:
+      - ${VIEWER_SOURCE_ROOT:?Set VIEWER_SOURCE_ROOT to the absolute legacy web directory}:/sources:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+volumes:
+  postgres:

@@ -2,6 +2,22 @@ import json, subprocess, sys, tempfile, unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];SCRIPT=ROOT/'web/build_gaia.py'
 class BuilderTests(unittest.TestCase):
+ def test_browsecomp_visible_regrade_replaces_legacy_score_without_rewriting_it(self):
+  import hashlib
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d)/'run';(root/'logs').mkdir(parents=True);(root/'checks').mkdir();out=Path(d)/'view'
+   source=root/'native.jsonl';source.write_text(json.dumps({'question':'Q','prediction':'wrong','messages':[{'content':'<think>gold</think><answer>wrong</answer>'}],'num_rounds':100})+'\n')
+   original={'cases':{'row0000':{'agent_state':'terminal','result_path':str(source),'judge_state':'scored','is_correct':True}}};(root/'status.json').write_text(json.dumps(original))
+   (root/'checks/visible-response-judge-policy.json').write_text('{}')
+   (root/'checks/row0000-visible-response-judge.json').write_text(json.dumps({'source_result_path':str(source),'source_result_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'response_filter':'visible_final_only','status':'scored','is_correct':False}))
+   events=[{'event':'span_start','span_id':'task','kind':'task','epoch':100,'input':{'question':'Q'}},{'event':'span_start','span_id':'policy','kind':'policy_model','epoch':101},{'event':'span_end','span_id':'policy','kind':'policy_model','epoch':103,'seconds':2,'output':'<think>gold</think><answer>wrong</answer>'},{'event':'span_end','span_id':'task','kind':'task','epoch':110,'seconds':10}]
+   (root/'logs/row0000-agent-events.jsonl').write_text('\n'.join(json.dumps(x) for x in events)+'\n')
+   result=subprocess.run([sys.executable,str(SCRIPT),'--run-root',str(root),'--output-dir',str(out),'--label','fake','--benchmark','BrowseComp','--requested-cases','1'],text=True,capture_output=True)
+   self.assertEqual(result.returncode,0,result.stderr)
+   case=json.loads((out/'traces.json').read_text())['cases'][0]
+   self.assertFalse(case['correct']);self.assertIn('最终可见',case['judge'])
+   self.assertEqual(json.loads((root/'status.json').read_text()),original)
+
  def test_browsecomp_displays_final_exact_answer_without_changing_source(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d)/'run';(root/'logs').mkdir(parents=True);out=Path(d)/'view'
