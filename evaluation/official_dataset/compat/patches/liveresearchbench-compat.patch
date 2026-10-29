@@ -1,0 +1,61 @@
+diff --git a/liveresearchbench/common/io_utils.py b/liveresearchbench/common/io_utils.py
+index b70f624..dc612f5 100644
+--- a/liveresearchbench/common/io_utils.py
++++ b/liveresearchbench/common/io_utils.py
+@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
+ logger = logging.getLogger(__name__)
+ 
+ # HuggingFace dataset configuration
+-HF_DATASET_NAME = "Salesforce/LiveResearchBench"
++HF_DATASET_NAME = "Salesforce/LiveResearchBenchFull"
+ HF_SUBSET = "question_with_checklist"
+ HF_SPLIT = "test"
+ 
+@@ -78,7 +78,11 @@ def load_liveresearchbench_dataset(
+     """
+     try:
+         logger.info(f"Loading dataset {dataset_name}/{subset}/{split} from HuggingFace...")
+-        dataset = load_dataset(dataset_name, subset, split=split)
++        local_parquet = os.environ.get("LRB_DATA_PARQUET")
++        if local_parquet:
++            dataset = load_dataset("parquet", data_files={split: local_parquet}, split=split)
++        else:
++            dataset = load_dataset(dataset_name, subset, split=split)
+         
+         # Group by qid (one row per checklist item, so need to aggregate)
+         from collections import defaultdict
+diff --git a/liveresearchbench/common/model_clients.py b/liveresearchbench/common/model_clients.py
+index 27cb034..e699296 100644
+--- a/liveresearchbench/common/model_clients.py
++++ b/liveresearchbench/common/model_clients.py
+@@ -253,13 +253,10 @@ class OpenAIClient(BaseAIClient):
+         
+         response_format = None
+         if schema:
+-            response_format = {
+-                "type": "json_schema",
+-                "json_schema": {
+-                    "name": "grading_response",
+-                    "schema": schema
+-                }
+-            }
++            # DeepSeek supports JSON objects but not the API json_schema mode.
++            # Keep the official schema and validate the returned object locally.
++            messages.insert(0, {"role": "system", "content": "Return a JSON object matching this schema: " + json.dumps(schema, ensure_ascii=False)})
++            response_format = {"type": "json_object"}
+         
+         try:
+             response = await self.client.chat.completions.create(
+@@ -269,7 +266,11 @@ class OpenAIClient(BaseAIClient):
+             )
+             
+             content = response.choices[0].message.content
+-            return json.loads(content)
++            result = json.loads(content)
++            if schema:
++                import jsonschema
++                jsonschema.validate(instance=result, schema=schema)
++            return result
+         except Exception as e:
+             raise Exception(f"Failed to generate content: {str(e)}")
+     

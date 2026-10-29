@@ -1,4 +1,10 @@
 import json
+import sys as _quest_sys
+from pathlib import Path as _QuestPath
+_quest_repo = str(_QuestPath(__file__).resolve().parents[2])
+if _quest_repo not in _quest_sys.path:
+    _quest_sys.path.append(_quest_repo)
+from contrib.deepseek_data.dsml import normalize_dsml
 import json5
 import os
 import re
@@ -189,8 +195,9 @@ class MultiTurnReactAgent(FnCallAgent):
                     content = ""
                 
                 print(content)
-                
-                # Extra processing for stop sequences (in case API doesn't handle correctly)
+                # Preserve non-tool text while normalizing complete DSML calls.
+                if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":
+                    content = normalize_dsml(content)
                 stop_sequences = ["\n<tool_response>", "<tool_response>"]
                 for stop_seq in stop_sequences:
                     if content and stop_seq in content:
@@ -574,6 +581,7 @@ class MultiTurnReactAgent(FnCallAgent):
                 self.save_trajectory(result)
                 return result
 
+        termination = 'maximum model calls reached'
         content = messages[-1]['content']
         if '<answer>' in content and '</answer>' in content:
             answer_text = messages[-1]['content'].split('<answer>')[1].split('</answer>')[0]

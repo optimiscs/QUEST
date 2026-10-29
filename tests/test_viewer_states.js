@@ -1,0 +1,11 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert'),path=require('path');
+const source=fs.readFileSync(path.join(__dirname,'../web/trace-viewer/app.js'),'utf8');
+const a=source.slice(source.indexOf('  function caseState('),source.indexOf('  function hasGroundTruth('));
+const b=source.slice(source.indexOf('  function overviewStateLabel('),source.indexOf('  function renderOverview('));
+const state={data:{run:{}},datasetMeta:{}};
+const c={state};vm.runInNewContext(a+b+'\nthis.caseState=caseState;this.overviewStateLabel=overviewStateLabel;',c);
+assert.equal(c.caseState({correct:true}).key,'pass');assert.equal(c.caseState({correct:false}).key,'fail');
+assert.equal(c.caseState({correct:null}).key,'error');assert.equal(c.caseState({inProgress:true}).key,'running');
+state.data.run.stopped=true;assert.equal(c.caseState({inProgress:true}).key,'stopped');
+assert.equal(c.overviewStateLabel({key:'stopped'}),'评估已终止');assert.equal(c.overviewStateLabel({key:'fail'}),'研究完成 · 未通过');
+console.log('viewer states: pass, fail, unscored, running, stopped remain distinct');

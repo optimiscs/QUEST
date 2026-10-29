@@ -6,6 +6,22 @@ import concurrent.futures
 from tqdm import tqdm
 import threading
 from datetime import datetime
+# Enable the server-local credential pool without changing tool prompts or dataset code.
+_repo_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+_workspace = os.path.join(_repo_root, "workspace")
+_project_root = os.environ.get("QUEST_PROJECT_ROOT", _workspace if os.path.isdir(os.path.join(_workspace, "strict-reproduction")) else os.path.dirname(_repo_root))
+_rotation_pool = os.environ.get("QUEST_KEY_POOL_DIR", os.path.join(_project_root, "strict-reproduction", ".secrets"))
+_rotation_file = os.environ.get("QUEST_KEY_POOL_FILE", os.path.join(_rotation_pool, "api_key_pool.json"))
+if os.environ.get("QUEST_KEY_ROTATION", "1") == "1" and os.path.isfile(_rotation_file):
+    import importlib.util as _importlib_util
+    os.environ["QUEST_KEY_ROTATION"] = "1"
+    for _name in ("JINA_API_KEYS", "SERPER_KEY_ID"):
+        if not os.environ.get(_name): os.environ[_name] = "rotation-managed"
+    _adapter_path = os.path.join(os.path.dirname(__file__), "key_rotation", "sitecustomize.py")
+    _spec = _importlib_util.spec_from_file_location("quest_key_rotation", _adapter_path)
+    _adapter = _importlib_util.module_from_spec(_spec)
+    _spec.loader.exec_module(_adapter)
+
 from react_agent import MultiTurnReactAgent, PYTHON_TOOL_ENABLED, SCHOLAR_TOOL_ENABLED
 import time
 import math

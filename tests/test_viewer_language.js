@@ -1,0 +1,15 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert'),path=require('path');
+const source=fs.readFileSync(path.join(__dirname,'../web/trace-viewer/app.js'),'utf8');
+const start=source.indexOf('  function updateWorkspaceLinks()');
+const end=source.indexOf('  function manifestPath()',start);
+assert(start>=0 && end>start);
+const links=[{dataset:{siteOption:'en'}},{dataset:{siteOption:'zh'}}];
+const context={dom:{workspaceMenu:{}},window:{location:{search:'?dataset=gaia-sft32'}},siteLocale:'zh',nowHash:()=> '#trace-02/overview',$$:()=>links};
+vm.runInNewContext(source.slice(start,end)+'\nthis.updateWorkspaceLinks=updateWorkspaceLinks;',context);
+context.updateWorkspaceLinks();
+assert.equal(links[0].href,'../?dataset=gaia-sft32#trace-02/overview');
+assert.equal(links[1].href,'./?dataset=gaia-sft32#trace-02/overview');
+context.siteLocale='en';context.updateWorkspaceLinks();
+assert.equal(links[0].href,'./?dataset=gaia-sft32#trace-02/overview');
+assert.equal(links[1].href,'trace-viewer-zh/?dataset=gaia-sft32#trace-02/overview');
+console.log('language switch retains dataset, case and tab');

@@ -1,3 +1,7 @@
+import sys as _quest_options_sys
+from pathlib import Path as _QuestOptionsPath
+_quest_options_sys.path.insert(0, str(_QuestOptionsPath(__file__).resolve().parents[2]))
+from contrib.deepseek_data.request_options import reasoning_options
 import json
 import os
 import re
@@ -13,10 +17,10 @@ from litellm import completion
 # model="openai/gpt-5" 
 
 # AZURE
-os.environ["AZURE_API_KEY"] = "" # "my-azure-api-key"
-os.environ["AZURE_API_BASE"] = "" # "https://example-endpoint.openai.azure.com"
-os.environ["AZURE_API_VERSION"] = "" # "2023-05-15"
-model="azure/gpt-5" 
+os.environ["AZURE_API_KEY"] = os.environ.get("AZURE_API_KEY", "") # "my-azure-api-key"
+os.environ["AZURE_API_BASE"] = os.environ.get("AZURE_API_BASE", "") # "https://example-endpoint.openai.azure.com"
+os.environ["AZURE_API_VERSION"] = os.environ.get("AZURE_API_VERSION", "") # "2023-05-15"
+model=os.environ.get("QUEST_PIPELINE_MODEL", "azure/gpt-5")
 
 
 # Import dimension weight generation prompts for English
@@ -47,7 +51,7 @@ class AIClient():
         response = completion(
             model=model,
             messages=[{ "content": user_prompt,"role": "user"}],
-            reasoning_effort="low",
+            **reasoning_options({"reasoning_effort": "low"}),
             max_tokens=5120
         )
         # print(response)

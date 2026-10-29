@@ -1,3 +1,7 @@
+import sys as _quest_options_sys
+from pathlib import Path as _QuestOptionsPath
+_quest_options_sys.path.insert(0, str(_QuestOptionsPath(__file__).resolve().parents[1]))
+from contrib.deepseek_data.request_options import reasoning_options
 import argparse
 import asyncio
 import glob
@@ -69,7 +73,7 @@ class ClaudeVerifier:
             "max_tokens": 32768,
             "temperature": 1,
             "num_retries": 3,
-            "thinking":{"type": "enabled", "budget_tokens": 16384},
+            **reasoning_options({"thinking": {"type": "enabled", "budget_tokens": 16384}}),
         }
         if self.model_id.startswith("azure/"):
             api_key = os.environ.get("RUBRIC_VERIFIER_AZURE_API_KEY")

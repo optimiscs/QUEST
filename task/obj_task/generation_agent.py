@@ -1,4 +1,10 @@
 import json
+import sys as _quest_sys
+from pathlib import Path as _QuestPath
+_quest_repo = str(_QuestPath(__file__).resolve().parents[2])
+if _quest_repo not in _quest_sys.path:
+    _quest_sys.path.append(_quest_repo)
+from contrib.deepseek_data.dsml import normalize_dsml
 import json5
 import os
 import re
@@ -156,6 +162,8 @@ class MultiTurnReactAgent(FnCallAgent):
             "stop": ["\n<tool_response>", "<tool_response>"],
             "num_retries": max_tries,
         }
+        if os.getenv("QUEST_SMOKE_DISABLE_THINKING") == "1":
+            call_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         # if 'top_p' in self.llm_generate_cfg:
         #     call_kwargs["top_p"] = self.llm_generate_cfg.get('top_p', 0.95)
         if 'presence_penalty' in self.llm_generate_cfg:
@@ -232,6 +240,9 @@ class MultiTurnReactAgent(FnCallAgent):
                     content = ""
                 
                 print(content)
+                # Preserve non-tool text while normalizing complete DSML calls.
+                if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":
+                    content = normalize_dsml(content)
                 stop_sequences = ["\n<tool_response>", "<tool_response>"]
                 for stop_seq in stop_sequences:
                     if content and stop_seq in content:

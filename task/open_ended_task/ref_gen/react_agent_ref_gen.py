@@ -1,4 +1,15 @@
+import sys as _quest_options_sys
+from pathlib import Path as _QuestOptionsPath
+_quest_options_sys.path.insert(0, str(_QuestOptionsPath(__file__).resolve().parents[2]))
+from contrib.deepseek_data.request_options import reasoning_options
 import json
+import sys as _quest_sys
+from pathlib import Path as _QuestPath
+_quest_repo = str(_QuestPath(__file__).resolve().parents[3])
+if _quest_repo not in _quest_sys.path:
+    _quest_sys.path.append(_quest_repo)
+from contrib.deepseek_data.dsml import normalize_dsml, close_incomplete_tool_call
+import re
 import json5
 import os
 from typing import Dict, Iterator, List, Literal, Optional, Tuple, Union
@@ -62,16 +73,22 @@ class MultiTurnReactAgent(FnCallAgent):
             try:
                 print(f"--- Attempting to call the service, try {attempt + 1}/{max_tries} ---")
                 chat_response = completion(
-                    model="bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0", 
+                    model=os.environ.get("QUEST_PIPELINE_MODEL", "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
                     messages=msgs,
                     stop=["\n<tool_response>", "<tool_response>"],
                     # reasoning_effort="low",
-                    max_tokens=40000,
+                    max_tokens=int(os.getenv("QUEST_REF_MAX_TOKENS", "40000")),
+                    **reasoning_options({}),
                 )
-                content = chat_response.choices[0].message.content
+                content = chat_response.choices[0].message.content or ""
+                if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":
+                    print("[DeepSeek raw response]", content)
+                if os.getenv("QUEST_DEEPSEEK_COMPAT") == "1":
+                    content = close_incomplete_tool_call(content)
+                    content = normalize_dsml(content)
 
                 # OpenRouter provides API calling. If you want to use OpenRouter, you need to uncomment line 89 - 90.
-                if "reasoning_content" in dict(chat_response.choices[0].message):
+                if getattr(chat_response.choices[0].message, "reasoning_content", None):
                     reasoning_content = "<think>\n" + chat_response.choices[0].message.reasoning_content.strip() + "\n</think>"
                     content = reasoning_content + content                
                 

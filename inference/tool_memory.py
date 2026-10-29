@@ -358,7 +358,7 @@ class Memory(BaseTool):
         memory_system_prompt = MEMORY_SYSTEM_PROMPT_NO_VISIT if visit_disabled else MEMORY_SYSTEM_PROMPT
 
         if use_memory_local_prompt():
-            model_name = get_local_served_model_name()
+            model_name = get_local_served_model_name(role="memory")
             full_messages = messages.copy()
             has_system = any(msg.get("role") == "system" for msg in full_messages)
             if not has_system:

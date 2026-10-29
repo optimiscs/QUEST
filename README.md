@@ -356,3 +356,6 @@ for a citation.
   year={2026}
 }
 ```
+
+
+Local extensions, workspace paths and verification boundaries: [docs/LOCAL_FEATURES.md](docs/LOCAL_FEATURES.md).

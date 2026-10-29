@@ -13,10 +13,10 @@ import sys
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(CURRENT_DIR, "longform_rubric", "prompt"))
 
-from polish_prompt import POLISH_TEMPLATE
+# Missing upstream import; POLISH_TEMPLATE is unused in this file.
 
 # model configuration
-model="openai/gpt-5.2"
+model=os.environ.get("QUEST_PIPELINE_MODEL", "openai/gpt-5.2")
 
 
 class AIClient():

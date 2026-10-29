@@ -5,3 +5,6 @@ inference/cache/
 *.log
 *.tmp
 *.bak
+
+# Local runtime artifacts and compatibility links (never commit data or credentials).
+/workspace/

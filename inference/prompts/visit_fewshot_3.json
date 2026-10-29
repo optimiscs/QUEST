@@ -1,0 +1,26 @@
+[
+  {
+    "role": "user",
+    "content": "Please process the following webpage content and user goal to extract relevant information:\n\n## **Webpage Content** \nTown archive: The Oak Bridge opened in 1984. It crosses the River Mere.\n\n## **User Goal**\nWhen did Oak Bridge open?\n\n## **Task Guidelines**\n1. **Content Scanning for Rationale**: Locate the **specific sections/data** directly related to the user's goal within the webpage content\n2. **Key Extraction for Evidence**: Identify and extract the **most relevant information** from the content, you never miss any important information, output the **full original context** of the content as far as possible, it can be more than three paragraphs.\n3. **Summary Output for Summary**: Organize into a concise paragraph with logical flow, prioritizing clarity and judge the contribution of the information to the goal.\n\n**Final Output Format using JSON format has \"rational\", \"evidence\", \"summary\" feilds**\n"
+  },
+  {
+    "role": "assistant",
+    "content": "{\"rational\": \"The archive directly states the opening year.\", \"evidence\": \"The Oak Bridge opened in 1984.\", \"summary\": \"Oak Bridge opened in 1984.\"}"
+  },
+  {
+    "role": "user",
+    "content": "Please process the following webpage content and user goal to extract relevant information:\n\n## **Webpage Content** \nMuseum record: The Green Vase is made of clay. Its maker is unknown.\n\n## **User Goal**\nWho made the Green Vase?\n\n## **Task Guidelines**\n1. **Content Scanning for Rationale**: Locate the **specific sections/data** directly related to the user's goal within the webpage content\n2. **Key Extraction for Evidence**: Identify and extract the **most relevant information** from the content, you never miss any important information, output the **full original context** of the content as far as possible, it can be more than three paragraphs.\n3. **Summary Output for Summary**: Organize into a concise paragraph with logical flow, prioritizing clarity and judge the contribution of the information to the goal.\n\n**Final Output Format using JSON format has \"rational\", \"evidence\", \"summary\" feilds**\n"
+  },
+  {
+    "role": "assistant",
+    "content": "{\"rational\": \"The record explicitly says the maker is unknown.\", \"evidence\": \"Its maker is unknown.\", \"summary\": \"The maker is unknown.\"}"
+  },
+  {
+    "role": "user",
+    "content": "Please process the following webpage content and user goal to extract relevant information:\n\n## **Webpage Content** \nGarden notes: Red roses bloom in May. White lilies bloom in June.\n\n## **User Goal**\nWhich flowers bloom in May and June?\n\n## **Task Guidelines**\n1. **Content Scanning for Rationale**: Locate the **specific sections/data** directly related to the user's goal within the webpage content\n2. **Key Extraction for Evidence**: Identify and extract the **most relevant information** from the content, you never miss any important information, output the **full original context** of the content as far as possible, it can be more than three paragraphs.\n3. **Summary Output for Summary**: Organize into a concise paragraph with logical flow, prioritizing clarity and judge the contribution of the information to the goal.\n\n**Final Output Format using JSON format has \"rational\", \"evidence\", \"summary\" feilds**\n"
+  },
+  {
+    "role": "assistant",
+    "content": "{\"rational\": \"Both sentences state a flower and its month.\", \"evidence\": \"Red roses bloom in May. White lilies bloom in June.\", \"summary\": \"Red roses bloom in May; white lilies bloom in June.\"}"
+  }
+]

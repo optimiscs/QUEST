@@ -396,6 +396,8 @@ class Visit(BaseTool):
         try:
             url = params["url"]
             goal = params["goal"]
+            if isinstance(goal, list):
+                goal = "\n".join(str(item) for item in goal)
         except:
             return "[Visit] Invalid request format: Input must be a JSON object containing 'url' and 'goal' fields"
 

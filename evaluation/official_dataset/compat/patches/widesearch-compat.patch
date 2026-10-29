@@ -1,0 +1,40 @@
+diff --git a/src/utils/llm.py b/src/utils/llm.py
+index cf4cb76..49fe95a 100644
+--- a/src/utils/llm.py
++++ b/src/utils/llm.py
+@@ -4,10 +4,13 @@
+ from typing import Any, Iterable, List, Optional, Union
+ 
+ from loguru import logger
+-from openai import AzureOpenAI
++from openai import AzureOpenAI, OpenAI
+ from openai.types.chat.chat_completion_message import ChatCompletionMessage
+ from tenacity import retry, stop_after_attempt, wait_incrementing
+-from volcenginesdkarkruntime import Ark
++try:
++    from volcenginesdkarkruntime import Ark
++except ModuleNotFoundError:
++    Ark = None  # Unused when the DeepSeek/OpenAI-compatible backend is selected.
+ 
+ from src.agent.schema import LLMOutputItem, ModelResponse, ToolCall
+ from src.utils.config import model_config
+@@ -60,9 +63,8 @@ def openai_complete(
+     """Complete a prompt with OpenAI APIs."""
+ 
+     def create_openai_client(base_url, api_key):
+-        return AzureOpenAI(
+-            api_version="2023-03-15-preview",
+-            azure_endpoint=base_url,
++        return OpenAI(
++            base_url=base_url,
+             api_key=api_key,
+             timeout=300,
+         )
+@@ -180,6 +182,7 @@ def llm_completion(
+         )
+     elif (
+         "gpt" in model_name
++        or "deepseek" in model_name
+         or "o3" in model_name
+         or "gemini" in model_name
+         or "o4" in model_name

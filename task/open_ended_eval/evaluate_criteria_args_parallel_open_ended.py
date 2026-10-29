@@ -1,3 +1,7 @@
+import sys as _quest_options_sys
+from pathlib import Path as _QuestOptionsPath
+_quest_options_sys.path.insert(0, str(_QuestOptionsPath(__file__).resolve().parents[1]))
+from contrib.deepseek_data.request_options import reasoning_options
 import json
 import os
 import re
@@ -85,8 +89,8 @@ class AIClient():
         print(f"--- API call | endpoint source: {endpoint_source} | using: {selected_host}:{selected_port} ---")
 
         client = OpenAI(
-            api_key="EMPTY",
-            base_url=openai_api_base,
+            api_key=os.environ.get("DEEPSEEK_API_KEY", "EMPTY"),
+            base_url=os.environ.get("DEEPSEEK_API_BASE", openai_api_base),
             timeout=600.0,
         )
 
@@ -95,6 +99,7 @@ class AIClient():
                 model=self.model,
                 messages=msgs,
                 temperature=0.6,
+                **reasoning_options({}),
             )
             content = response.choices[0].message.content
             if content and content.strip():
@@ -157,18 +162,16 @@ def normalize_result_types(result):
     # Convert score_a
     if 'score_a' in result:
         try:
-            result['score_a'] = float(result['score_a'])
+            result['score_a'] = float(result['score_a']) if not isinstance(result['score_a'], bool) else result['score_a']
         except (ValueError, TypeError):
             print(f"    Warning: cannot convert score_a to float: {result['score_a']}")
-            result['score_a'] = 0.0
 
     # Convert score_b
     if 'score_b' in result:
         try:
-            result['score_b'] = float(result['score_b'])
+            result['score_b'] = float(result['score_b']) if not isinstance(result['score_b'], bool) else result['score_b']
         except (ValueError, TypeError):
             print(f"    Warning: cannot convert score_b to float: {result['score_b']}")
-            result['score_b'] = 0.0
 
     # Convert confidence
     if 'confidence' in result:
@@ -195,6 +198,8 @@ def validate_score(result):
         return False
 
     if 'score_a' not in result or 'score_b' not in result:
+        return False
+    if isinstance(result['score_a'], bool) or isinstance(result['score_b'], bool):
         return False
 
     try:
@@ -256,17 +261,8 @@ def evaluate_single_criterion(document_content, ref_content, query, criterion_na
                 time.sleep(2)  # Wait before retry
                 continue
 
-    # All retries failed, return default result with 0 score
-    print(f"    All retries failed, assigning 0 score")
-    default_result = {
-        'score_a': 0.0,  # Document A (to evaluate)
-        'score_b': 0.0,  # Document B (reference)
-        'reason': 'Evaluation failed, could not get valid score after multiple retries',
-        'criterion_name': criterion_name,
-        'category': category,
-        'weight': float(criterion_data['weight'])
-    }
-    return normalize_result_types(default_result)
+    # Failure remains an error; it must not be converted into a zero score.
+    raise RuntimeError("Criterion scoring failed after retries; no score assigned")
 
 
 def evaluate_single_criterion_wrapper(args):
