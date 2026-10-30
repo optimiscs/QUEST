@@ -1,0 +1,7 @@
+{
+  "instruction": "Call exactly one tool per turn. Use a <tool_call> block followed by </tool_call>. For search and visit, put exactly one complete JSON object in the block. Copy the structure of the examples, changing only the text values. The key is written \"name\": followed by the tool name; never use an equals sign. All keys and string values use double quotes. For search, query is an array of strings; after its closing ] add two closing braces }}. For visit, url is an array of strings, goal is a string, and the object ends with }}. Before closing </tool_call>, verify all brackets and braces are closed. If a tool response says the call is invalid, write a new complete JSON object following an example. No comments or markdown inside the JSON.",
+  "examples": {
+    "search": {"name":"search", "arguments":{"query":["When was the Eiffel Tower completed?"]}},
+    "visit": {"name":"visit", "arguments":{"url":["https://example.com/history"], "goal":"Find the completion date"}}
+  }
+}

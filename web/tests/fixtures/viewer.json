@@ -1,0 +1,107 @@
+{
+  "run": {
+    "name": "测试运行",
+    "model": "TEST",
+    "benchmark": "TEST",
+    "totalCases": 2,
+    "judgePassed": 2,
+    "rounds": 2,
+    "toolCalls": 0,
+    "pagesRead": 0,
+    "searchQueries": 0,
+    "searchCalls": 0,
+    "wiki": "test"
+  },
+  "cases": [
+    {
+      "id": "trace-01",
+      "index": 1,
+      "topicZh": "测试任务 1",
+      "question": "测试问题",
+      "answer": "测试答案",
+      "answerNote": "测试说明",
+      "finalAnswer": "测试答案",
+      "groundTruth": "测试答案",
+      "correct": true,
+      "model": "TEST",
+      "risk": {
+        "level": "unknown"
+      },
+      "stats": {
+        "steps": 1,
+        "searchCalls": 0,
+        "readCalls": 0,
+        "computeCalls": 0,
+        "pagesRead": 0,
+        "searchQueries": 0
+      },
+      "durationSeconds": 1,
+      "sources": [],
+      "timingAvailable": false,
+      "timing": {
+        "total": 1
+      },
+      "domains": [],
+      "keyIndices": [],
+      "steps": [
+        {
+          "n": 1,
+          "kind": "answer",
+          "label": "结论",
+          "thought": "测试推理",
+          "model_seconds": 1,
+          "tool_seconds": 0,
+          "modelStart": 0,
+          "modelEnd": 1,
+          "toolStart": 1,
+          "toolEnd": 1
+        }
+      ]
+    },
+    {
+      "id": "trace-02",
+      "index": 2,
+      "topicZh": "测试任务 2",
+      "question": "测试问题",
+      "answer": "测试答案",
+      "answerNote": "测试说明",
+      "finalAnswer": "测试答案",
+      "groundTruth": "测试答案",
+      "correct": true,
+      "model": "TEST",
+      "risk": {
+        "level": "unknown"
+      },
+      "stats": {
+        "steps": 1,
+        "searchCalls": 0,
+        "readCalls": 0,
+        "computeCalls": 0,
+        "pagesRead": 0,
+        "searchQueries": 0
+      },
+      "durationSeconds": 1,
+      "sources": [],
+      "timingAvailable": false,
+      "timing": {
+        "total": 1
+      },
+      "domains": [],
+      "keyIndices": [],
+      "steps": [
+        {
+          "n": 1,
+          "kind": "answer",
+          "label": "结论",
+          "thought": "测试推理",
+          "model_seconds": 1,
+          "tool_seconds": 0,
+          "modelStart": 0,
+          "modelEnd": 1,
+          "toolStart": 1,
+          "toolEnd": 1
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Trace Viewer 数据 Schema
 
-页面读取的是一个**规范化后的单次评估运行包**（`traces.json`），不是原始
+导入器读取的是一个**规范化后的单次评估运行包**（`traces.json`），不是原始
 agent 日志。一个 JSON 文件对应一次评估运行；多个模型或多次 rollout 可以
 注册成多个数据集。
 
@@ -18,7 +18,7 @@ agent 日志。一个 JSON 文件对应一次评估运行；多个模型或多�
 /root/autodl-tmp/Quest/web/trace-viewer/datasets/index.json
 ```
 
-注册。站点是一个前端应用，不需要为每个评估复制一份 `index.html/app.js`。
+注册。导入器将每个运行和单条轨迹写入数据库；前端源码统一位于 `web/frontend/`，不再直接读取这些文件。
 
 当前内置文件夹：
 

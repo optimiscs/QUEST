@@ -7,6 +7,7 @@ Supports multithreaded processing for faster evaluation.
 
 import json
 import os
+import sys
 import re
 from typing import Dict, List, Optional
 from pathlib import Path
@@ -17,6 +18,8 @@ import argparse
 
 _ANSWER_TAG_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
 SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR.parent))
+from result_summary import summarize
 
 # Global lock for thread-safe printing.
 _print_lock = Lock()
@@ -272,7 +275,7 @@ def process_single_question(
             "ground_truth": ground_truth,
             "predicted_answer": predicted_answer,
             "judgment": "Ground-truth answer is empty or missing; cannot judge",
-            "is_correct": False
+            "is_correct": None
         }
 
     # Call the model for judgment.
@@ -280,7 +283,7 @@ def process_single_question(
 
     # Parse correctness, supporting true/false outputs in either English or Chinese.
     parsed = parse_judgment_to_bool(judgment)
-    is_correct = bool(parsed) if parsed is not None else False
+    is_correct = parsed
 
     if verbose:
         with _print_lock:
@@ -429,7 +432,7 @@ def main():
                 if verbose:
                     with _print_lock:
                         print(f"Error processing file {rec['file_path']}, line {rec['line']}: {e}")
-                continue
+                all_results.append({"file": os.path.basename(rec["file_path"]), "line": rec["line"], "question": rec["data"].get("question", ""), "is_correct": None, "error": str(e)})
 
     # Sort by file name and line number to keep the output stable.
     all_results.sort(key=lambda x: (x["file"], x["line"]))
@@ -437,83 +440,12 @@ def main():
     # Collect all involved file names in sorted order.
     sorted_filenames = [f.name for f in jsonl_files]
 
-    # Preprocess results by grouping them per question.
-    # question -> { filename -> is_correct }
-    question_results = {}
-    for r in all_results:
-        q = r.get("question", "")
-        f_name = r.get("file", "")
-        is_correct = r.get("is_correct", False)
-        
-        if q not in question_results:
-            question_results[q] = {}
-        
-        # Record whether this question is correct in the current file.
-        if f_name not in question_results[q]:
-            question_results[q][f_name] = is_correct
-        elif is_correct:
-            question_results[q][f_name] = True
-
-    total_questions = len(question_results)
-    
-    print(f"\n=== Best@k Statistics (Total questions: {total_questions}) ===")
-    
-    best_at_k_stats = {}
-    # Track whether each question has already been solved.
-    question_solved_status = {q: False for q in question_results}
-    
-    for k, filename in enumerate(sorted_filenames, 1):
-        # Update solved status using the current file.
-        for q in question_results:
-            if not question_solved_status[q]:
-                if question_results[q].get(filename, False):
-                    question_solved_status[q] = True
-        
-        correct_count = sum(1 for v in question_solved_status.values() if v)
-        accuracy = correct_count / total_questions if total_questions > 0 else 0
-        
-        print(f"Best@{k}: {accuracy:.2%} ({correct_count}/{total_questions})")
-        
-        best_at_k_stats[f"best@{k}"] = {
-            "correct": correct_count,
-            "total": total_questions,
-            "accuracy": accuracy
-        }
-    
-    # Save detailed results to a JSON file.
+    summary = summarize(all_results, sorted_filenames)
     output_file = os.path.join(target_dir, "judgment_results.json")
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
-    
-    print(f"\nDetailed results saved to: {output_file}")
-    
-    # Save a simplified summary.
-    summary = {
-        "total_questions": total_questions,
-        "best_at_k": best_at_k_stats,
-        "by_file": {}
-    }
-    
-    per_file_question = {}
-    for result in all_results:
-        file_name = result["file"]
-        q = result.get("question", "")
-        if file_name not in per_file_question:
-            per_file_question[file_name] = {}
-        if q not in per_file_question[file_name]:
-            per_file_question[file_name][q] = False
-        if result.get("is_correct", False):
-            per_file_question[file_name][q] = True
-    
-    for file_name, q_map in per_file_question.items():
-        total_q = len(q_map)
-        correct_q = sum(1 for v in q_map.values() if v)
-        summary["by_file"][file_name] = {
-            "total": total_q,
-            "correct": correct_q,
-            "accuracy": correct_q / total_q if total_q > 0 else 0
-        }
-    
+    print(f"Detailed results saved to: {output_file}")
+
     summary_file = os.path.join(target_dir, "judgment_summary.json")
     with open(summary_file, 'w', encoding='utf-8') as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)

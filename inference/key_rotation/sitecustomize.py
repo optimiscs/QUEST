@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -80,7 +81,7 @@ if os.environ.get('QUEST_KEY_ROTATION') == '1' and os.environ.get('QUEST_KEY_ROT
 
     def switchable(status, body):
         if status in (401, 402): return True
-        if status not in (403, 429): return False
+        if status not in (400, 403, 429): return False
         text = body.lower()[:10000]
         return bool(re.search(r'(insufficient|not enough|exhausted|exceeded|no remaining|zero).{0,40}(quota|credit|balance)|(?:quota|credit|balance).{0,40}(insufficient|exhausted|exceeded|not enough|depleted)', text))
 
@@ -101,6 +102,12 @@ if os.environ.get('QUEST_KEY_ROTATION') == '1' and os.environ.get('QUEST_KEY_ROT
             headers = {k: v for k, v in headers.items() if k.lower() != 'authorization'}
             headers['Authorization'] = key if key.lower().startswith('bearer ') else 'Bearer ' + key
             opts = dict(kwargs, headers=headers)
+            if attempted:
+                # Rotation is another HTTP request, not a free nested retry.
+                guard_module = sys.modules.get('reader_retry_guard')
+                guard = getattr(guard_module.local, 'current', None) if guard_module else None
+                if guard is not None:
+                    guard.before()
             response = original_request(self, method, url, **opts)
             record('jina', 'response', index, response.status_code)
             if not switchable(response.status_code, response.text): return response
@@ -137,11 +144,20 @@ if os.environ.get('QUEST_KEY_ROTATION') == '1' and os.environ.get('QUEST_KEY_ROT
         method, url, body, clean, chunked, index, attempted = saved
         while True:
             record('serper', 'response', index, response.status)
-            if response.status not in (401, 402, 403, 429): return response
+            if response.status not in (400, 401, 402, 403, 429): return response
             data = response.read()
-            if not switchable(response.status, data.decode('utf-8', errors='replace')):
+            text = data.decode('utf-8', errors='replace')
+            permanent = switchable(response.status, text)
+            transient_limit = (response.status == 429 and not permanent and
+                               os.getenv('QUEST_SERPER_RATE_LIMIT_ROTATE') == '1' and
+                               bool(re.search(r'rate.?limit|requests per|too many requests', text, re.I)) and
+                               len(attempted) < 3)
+            if not permanent and not transient_limit:
                 return BufferedResponse(response, data)
-            exhaust('serper', index, response.status)
+            if permanent:
+                exhaust('serper', index, response.status)
+            else:
+                record('serper', 'temporary_rate_limit_retry', index, response.status)
             selected = choose('serper', attempted)
             if selected is None: return BufferedResponse(response, data)
             index, key = selected

@@ -27,7 +27,7 @@ logger.setLevel(logging.INFO)
 
 # Fixed configuration parameters
 CRITERIA_FILE = "data/criteria_data/criteria.jsonl"
-REFERENCE_FILE = "data/test_data/cleaned_data/reference.jsonl"
+REFERENCE_FILE = os.environ.get("DRB_REFERENCE_FILE", "data/test_data/cleaned_data/reference.jsonl")
 MAX_RETRIES = 10
 
 def format_criteria_list(criteria_data):

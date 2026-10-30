@@ -15,6 +15,8 @@ def scrape(citation_url):
         result = scrape_url(citation_url)
         retries += 1
         if 'error' in result:
+            if result.get('status_code') == 402:
+                break  # Every configured key was already attempted.
             time.sleep(1)
         else:
             break

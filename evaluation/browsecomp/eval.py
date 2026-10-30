@@ -28,6 +28,8 @@ from threading import Lock
 from typing import Dict, Iterator, List, Optional, Tuple
 from urllib.request import Request, urlopen
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from result_summary import summarize
 from litellm import completion
 
 DATASET_URL = "https://openaipublic.blob.core.windows.net/simple-evals/browse_comp_test_set.csv"
@@ -313,7 +315,7 @@ def process_single_question(
             "extracted_answer": extract_final_answer(prediction) if prediction else "",
             "grader_output": "gold answer not found",
             "verdict": None,
-            "is_correct": False,
+            "is_correct": None,
         }
 
     extracted = extract_final_answer(prediction) if prediction else ""
@@ -337,7 +339,7 @@ def process_single_question(
     # Call grader
     grader_output = call_litellm_for_judgment(question, gold_answer, extracted)
     verdict = parse_verdict(grader_output)
-    is_correct = verdict == "yes"
+    is_correct = (verdict == "yes") if verdict is not None else None
 
     if verbose:
         with _print_lock:
@@ -485,83 +487,18 @@ def main():
                 if verbose:
                     with _print_lock:
                         print(f"Error processing {rec['file_path']}, line {rec['line']}: {e}")
-                continue
+                all_results.append({"file": os.path.basename(rec["file_path"]), "line": rec["line"], "question": rec["data"].get("question", ""), "is_correct": None, "error": str(e)})
 
     # Sort results by file name and line number
     all_results.sort(key=lambda x: (x["file"], x["line"]))
 
     sorted_filenames = [f.name for f in jsonl_files]
 
-    # ---- Best@k statistics ----
-    question_results: Dict[str, Dict[str, bool]] = {}
-    for r in all_results:
-        q = r.get("question", "")
-        f_name = r.get("file", "")
-        is_correct = r.get("is_correct", False)
-
-        if q not in question_results:
-            question_results[q] = {}
-        if f_name not in question_results[q]:
-            question_results[q][f_name] = is_correct
-        elif is_correct:
-            question_results[q][f_name] = True
-
-    total_questions = len(question_results)
-
-    print(f"\n=== Best@k Statistics (Total questions: {total_questions}) ===")
-
-    best_at_k_stats = {}
-    question_solved_status = {q: False for q in question_results}
-
-    for k, filename in enumerate(sorted_filenames, 1):
-        for q in question_results:
-            if not question_solved_status[q]:
-                if question_results[q].get(filename, False):
-                    question_solved_status[q] = True
-
-        correct_count = sum(1 for v in question_solved_status.values() if v)
-        accuracy = correct_count / total_questions if total_questions > 0 else 0
-
-        print(f"Best@{k}: {accuracy:.2%} ({correct_count}/{total_questions})")
-
-        best_at_k_stats[f"best@{k}"] = {
-            "correct": correct_count,
-            "total": total_questions,
-            "accuracy": accuracy,
-        }
-
-    # ---- Save detailed results ----
+    summary = summarize(all_results, sorted_filenames)
     output_file = os.path.join(target_dir, "judgment_results.json")
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
-    print(f"\nDetailed results saved to: {output_file}")
-
-    # ---- Save summary ----
-    per_file_question: Dict[str, Dict[str, bool]] = {}
-    for result in all_results:
-        file_name = result["file"]
-        q = result.get("question", "")
-        if file_name not in per_file_question:
-            per_file_question[file_name] = {}
-        if q not in per_file_question[file_name]:
-            per_file_question[file_name][q] = False
-        if result.get("is_correct", False):
-            per_file_question[file_name][q] = True
-
-    summary = {
-        "total_questions": total_questions,
-        "best_at_k": best_at_k_stats,
-        "by_file": {},
-    }
-
-    for file_name, q_map in per_file_question.items():
-        total_q = len(q_map)
-        correct_q = sum(1 for v in q_map.values() if v)
-        summary["by_file"][file_name] = {
-            "total": total_q,
-            "correct": correct_q,
-            "accuracy": correct_q / total_q if total_q > 0 else 0,
-        }
+    print(f"Detailed results saved to: {output_file}")
 
     summary_file = os.path.join(target_dir, "judgment_summary.json")
     with open(summary_file, "w", encoding="utf-8") as f:

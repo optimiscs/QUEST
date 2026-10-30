@@ -418,6 +418,10 @@ class Memory(BaseTool):
             "temperature": 1,
             "num_retries": max_retries
         }
+        if os.environ.get('MEMORY_MAX_OUTPUT_TOKENS'):
+            call_kwargs['max_tokens'] = int(os.environ['MEMORY_MAX_OUTPUT_TOKENS'])
+        if os.environ.get('MEMORY_DISABLE_THINKING', '').lower() == 'true':
+            call_kwargs['extra_body'] = {'chat_template_kwargs': {'enable_thinking': False}}
         
         # Use the shared API/Azure configuration, with legacy memory-specific vars as fallback.
         api_key = (
@@ -620,6 +624,46 @@ IMPORTANT: If no state changes are warranted, return prev_state unchanged."""
         
         return user_prompt
     
+    def _summarize_in_batches(self, events, prev_state, budget):
+        """Carry state through ordered batches, retaining every event character.
+
+        A single oversized event is split at Unicode character boundaries. The
+        original events remain untouched; no partial state is returned on error.
+        """
+        pending=[dict(event) if isinstance(event,dict) else {'role':'event','content':json.dumps(event,ensure_ascii=False)} for event in events]
+        state=prev_state;batch_number=0
+        anchor=next((event for event in pending if event.get('role')=='user'),None)
+        if anchor and self.count_tokens(self._format_memory_input([anchor],None))>budget//4:anchor=None
+        def payload(batch):
+            return ([anchor]+batch) if anchor is not None and not any(event is anchor for event in batch) else batch
+        def size(batch):return self.count_tokens(self._format_memory_input(payload(batch),state))
+        while pending:
+            batch=[]
+            while pending and size(batch+[pending[0]])<=budget:batch.append(pending.pop(0))
+            if not batch:
+                event=pending[0];content=event.get('content')
+                if not isinstance(content,str):
+                    event={'role':event.get('role','event'),'content':json.dumps(event,ensure_ascii=False),'serialized_original_event':True};pending[0]=event;content=event['content']
+                low,high,best=1,len(content)-1,0
+                while low<=high:
+                    middle=(low+high)//2;fragment=dict(event,content=content[:middle],_memory_fragment=True)
+                    if size([fragment])<=budget:best=middle;low=middle+1
+                    else:high=middle-1
+                if not best:return '[Memory] Input budget cannot fit previous state and an event fragment; original history retained.'
+                batch=[dict(event,content=content[:best],_memory_fragment=True)]
+                pending[0]=dict(event,content=content[best:],_memory_fragment=True)
+            batch_number+=1;input_tokens=size(batch)
+            print(f'[Memory] Bounded batch {batch_number}: {input_tokens} input tokens, {len(batch)} events',flush=True)
+            result=self.call({'events':payload(batch),'prev_state':state},_memory_batch=True)
+            next_state=self._extract_json_from_response(result) if result else None
+            if not isinstance(next_state,dict):return f'[Memory] Bounded batch {batch_number} failed; original history retained.'
+            state=next_state
+            audit=os.getenv('MEMORY_BATCH_AUDIT')
+            if audit:
+                with open(audit,'a',encoding='utf-8') as handle:
+                    handle.write(json.dumps({'batch':batch_number,'input_tokens':input_tokens,'batch_events':len(batch),'remaining_events':len(pending),'events':payload(batch),'state':state},ensure_ascii=False)+'\n')
+        return json.dumps(state,ensure_ascii=False)
+
     def call(self, params: Union[str, dict], **kwargs) -> str:
         """
         Main call method
@@ -652,6 +696,10 @@ IMPORTANT: If no state changes are warranted, return prev_state unchanged."""
                 events=events,
                 prev_state=prev_state
             )
+            budget=int(os.getenv('MEMORY_INPUT_TOKEN_BUDGET','0'))
+            if budget and self.tokenizer is not None and self.count_tokens(formatted_content)>budget:
+                if kwargs.get('_memory_batch'):return '[Memory] Batch exceeded configured input budget; original history retained.'
+                return self._summarize_in_batches(events,prev_state,budget)
             
             # Build the messages
             messages = [{
@@ -660,7 +708,7 @@ IMPORTANT: If no state changes are warranted, return prev_state unchanged."""
             }]
             
             # Check the token threshold
-            if self.token_threshold is not None and self.tokenizer is not None:
+            if not kwargs.get('_memory_batch') and self.token_threshold is not None and self.tokenizer is not None:
                 token_count = self.count_tokens(formatted_content)
                 if token_count <= self.token_threshold:
                     print(f"[Memory] Token count ({token_count}) <= threshold ({self.token_threshold}), skipping LLM call")
@@ -669,6 +717,25 @@ IMPORTANT: If no state changes are warranted, return prev_state unchanged."""
             
             # Call the API
             result = self.call_api_with_litellm(messages)
+            # Keep malformed summaries out of the state. When explicitly
+            # enabled, give the same model one chance to correct its own JSON;
+            # retain the original response if the retry is also invalid.
+            if (os.getenv('MEMORY_RETRY_INVALID_JSON', '').lower() == 'true'
+                    and result and not result.startswith('[Memory]')
+                    and self._extract_json_from_response(result) is None):
+                estimated = self.count_tokens(formatted_content) + self.count_tokens(result)
+                if 0 < estimated < 56000:
+                    print('[Memory] Invalid JSON; retrying once with an explicit format correction', flush=True)
+                    retry_messages = messages + [
+                        {'role': 'assistant', 'content': result},
+                        {'role': 'user', 'content': 'The previous state is invalid JSON. Return the complete corrected state as one valid JSON object, with commas between fields and escaped newlines inside strings. Preserve the supported facts and do not add unsupported facts.'},
+                    ]
+                    retry_result = self.call_api_with_litellm(retry_messages)
+                    if retry_result and isinstance(self._extract_json_from_response(retry_result), dict):
+                        print('[Memory] JSON retry produced a parseable state', flush=True)
+                        result = retry_result
+                    else:
+                        print('[Memory] JSON retry remained invalid; original state retained', flush=True)
             return result
                 
         except json.JSONDecodeError as e:

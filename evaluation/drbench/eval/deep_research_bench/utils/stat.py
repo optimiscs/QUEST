@@ -35,6 +35,8 @@ if __name__ == "__main__":
 
 
     with open(args.output_path, 'w') as f:
-        f.write(f'total_citations: {total_citations/total_num}\n')
-        f.write(f'total_valid_citations: {total_valid_citations/total_num}\n')
-        f.write(f'valid_rate: {total_valid_citations / total_citations}\n')
+        f.write(f'total_citations: {total_citations / total_num if total_num else "null"}\n')
+        f.write(f'total_valid_citations: {total_valid_citations / total_num if total_num else "null"}\n')
+        f.write(f'valid_rate: {total_valid_citations / total_citations if total_citations else "null"}\n')
+        f.write(f'evaluated_reports: {total_num}\n')
+        f.write(f'validated_citations: {total_citations}\n')

@@ -1,0 +1,12 @@
+{
+  "instruction": "Call exactly one tool at a time. Write one <tool_call> block and wait for the tool response. For search and visit, the block contains exactly one JSON object. JSON rules: use double quotes, put a colon (not =) between every key and value, and close every [ with ] and every { with }. The JSON object must have name and arguments. For search, arguments.query must be an array of strings. For visit, arguments.url must be an array of strings and arguments.goal must be a string. For search and visit, before </tool_call>, check that the JSON ends with the two closing braces }}. If a tool call fails validation, correct the syntax before retrying. Do not put markdown or comments in the JSON.",
+  "negative_examples": [
+    {"tool":"search", "bad":"{\"name=\"search\", \"arguments\": {\"query\": [\"keyword\"]}}", "reason":"The name key must end with a quote followed by a colon; do not write name=.", "good":{"name":"search","arguments":{"query":["keyword"]}}},
+    {"tool":"search", "bad":"{\"name\": \"search\", \"arguments\": {\"query\": [\"keyword\"]}", "reason":"The outer JSON object is not closed; finish with two braces }}.", "good":{"name":"search","arguments":{"query":["keyword"]}}},
+    {"tool":"visit", "bad":"{\"name\": \"visit\", \"arguments\": {\"url\": \"https://example.com\", \"goal\": \"Find the date\"}}", "reason":"url must be an array even when there is one URL.", "good":{"name":"visit","arguments":{"url":["https://example.com"],"goal":"Find the date"}}}
+  ],
+  "examples": {
+    "search": {"name":"search", "arguments":{"query":["When was the Eiffel Tower completed?", "Eiffel Tower opening date"]}},
+    "visit": {"name":"visit", "arguments":{"url":["https://example.com/history"], "goal":"Find the completion date"}}
+  }
+}

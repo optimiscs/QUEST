@@ -165,8 +165,9 @@ echo "  DEFAULT_MODEL: $DEFAULT_MODEL"
 echo "  TARGET_MODELS: ${TARGET_MODELS[*]}"
 echo "  N_PROCESS:     $N_TOTAL_PROCESS"
 
-if [ -z "${JINA_API_KEY:-}" ]; then
-    echo "Error: JINA_API_KEY is empty. Check that api_config.yaml has JINA_API_KEYS set."
+JINA_POOL_PATH="${QUEST_KEY_POOL_FILE:-${QUEST_KEY_POOL_DIR:-${QUEST_PUBLIC_ROOT}/workspace/strict-reproduction/.secrets}/api_key_pool.json}"
+if [ "$RUN_FACT" = "true" ] && [ -z "${JINA_API_KEY:-}" ] && [ ! -f "$JINA_POOL_PATH" ]; then
+    echo "Error: JINA_API_KEY is empty and no Jina key pool is configured."
     exit 1
 fi
 if [ -z "${OPENAI_API_KEY:-}" ]; then
@@ -176,7 +177,8 @@ fi
 # =============================================================================
 # Step 3 — Run RACE evaluation for each target model
 # =============================================================================
-OUTPUT_LOG_FILE="$SCRIPT_DIR/output.log"
+OUTPUT_LOG_FILE="${OUTPUT_LOG_FILE:-$OUTPUT_DIR/output.log}"
+mkdir -p "$(dirname "$OUTPUT_LOG_FILE")"
 echo "Starting benchmark tests, log output to: $OUTPUT_LOG_FILE" > "$OUTPUT_LOG_FILE"
 
 for TARGET_MODEL in "${TARGET_MODELS[@]}"; do
@@ -187,19 +189,47 @@ for TARGET_MODEL in "${TARGET_MODELS[@]}"; do
     RACE_OUTPUT="$OUTPUT_DIR/race/$TARGET_MODEL"
     mkdir -p "$RACE_OUTPUT"
 
-    PYTHON_CMD="python -u deepresearch_bench_race.py \"$TARGET_MODEL\" \
-        --raw_data_dir $RAW_DATA_DIR \
-        --max_workers $N_TOTAL_PROCESS \
-        --query_file $QUERY_DATA_PATH \
-        --output_dir $RACE_OUTPUT \
-        --eval_model $EVAL_MODEL \
-        --clean_model $CLEAN_MODEL"
+    # Select exactly the input reports, retaining the benchmark's original query
+    # and language metadata. This also prevents cleaning an English report as zh.
+    CASE_QUERY="$RACE_OUTPUT/query.jsonl"
+    python - "$RAW_DATA_DIR/$TARGET_MODEL.jsonl" "$QUERY_DATA_PATH" "$CASE_QUERY" <<'PY'
+import json, sys
+from pathlib import Path
+def read(p):
+    return [json.loads(line) for line in Path(p).read_text().splitlines() if line.strip()]
+raw, queries = read(sys.argv[1]), read(sys.argv[2])
+prompts = {x['prompt'] for x in raw}
+selected = [x for x in queries if x.get('prompt') in prompts]
+if len(selected) != len(prompts):
+    raise SystemExit('Some input prompts are missing from the official DRBench query data')
+Path(sys.argv[3]).write_text(''.join(json.dumps(x, ensure_ascii=False)+'\n' for x in selected))
+PY
+
+    PYTHON_CMD=(python -u deepresearch_bench_race.py "$TARGET_MODEL"
+        --raw_data_dir "$RAW_DATA_DIR"
+        --cleaned_data_dir "$OUTPUT_DIR/cleaned_data"
+        --max_workers "$N_TOTAL_PROCESS"
+        --query_file "$CASE_QUERY"
+        --output_dir "$RACE_OUTPUT"
+        --eval_model "$EVAL_MODEL"
+        --clean_model "$CLEAN_MODEL")
     if [ -n "$LIMIT" ]; then
-        PYTHON_CMD="$PYTHON_CMD --limit $LIMIT"
+        PYTHON_CMD+=(--limit "$LIMIT")
     fi
 
-    echo "Executing: $PYTHON_CMD" | tee -a "$OUTPUT_LOG_FILE"
-    eval $PYTHON_CMD >> "$OUTPUT_LOG_FILE" 2>&1
+    echo "Executing: ${PYTHON_CMD[*]}" | tee -a "$OUTPUT_LOG_FILE"
+    "${PYTHON_CMD[@]}" >> "$OUTPUT_LOG_FILE" 2>&1
+    if [ ! -s "$RACE_OUTPUT/raw_results.jsonl" ]; then
+        echo "RACE produced no results; see $OUTPUT_LOG_FILE" >&2
+        exit 1
+    fi
+    python - "$RACE_OUTPUT/raw_results.jsonl" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as f:
+    rows = [json.loads(line) for line in f if line.strip()]
+if any('error' in row or 'overall_score' not in row for row in rows):
+    raise SystemExit('RACE returned an error or an incomplete score')
+PY
 
     echo "Completed RACE eval: $TARGET_MODEL"
     echo -e "\n========== RACE test completed for $TARGET_MODEL ==========\n" >> "$OUTPUT_LOG_FILE"
@@ -237,10 +267,26 @@ else
             --n_total_process "$N_TOTAL_PROCESS" >> "$OUTPUT_LOG_FILE" 2>&1
 
         echo "  [scrape]      $TARGET_MODEL" | tee -a "$OUTPUT_LOG_FILE"
-        python -u -m utils.scrape \
+        QUEST_KEY_ROTATION=0 python -u -m utils.scrape \
             --raw_data_path "$CITATION_OUTPUT/deduplicated.jsonl" \
             --output_path "$CITATION_OUTPUT/scraped.jsonl" \
             --n_total_process "$N_TOTAL_PROCESS" >> "$OUTPUT_LOG_FILE" 2>&1
+
+        if ! python - "$CITATION_OUTPUT/scraped.jsonl" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as f:
+    for line in f:
+        if not line.strip():
+            continue
+        for citation in json.loads(line).get('citations_deduped', {}).values():
+            if str(citation.get('url_content', '')).startswith('scrape failed:'):
+                raise SystemExit(1)
+PY
+        then
+            echo 'FACT unavailable: citation retrieval failed' | tee -a "$OUTPUT_LOG_FILE"
+            printf 'valid_rate: null\nreason: citation_retrieval_failed\n' > "$CITATION_OUTPUT/fact_result.txt"
+            continue
+        fi
 
         echo "  [validate]    $TARGET_MODEL" | tee -a "$OUTPUT_LOG_FILE"
         python -u -m utils.validate \

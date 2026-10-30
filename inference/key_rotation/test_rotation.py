@@ -24,7 +24,10 @@ with tempfile.TemporaryDirectory() as directory:
     requests.sessions.Session.request = fake_request
     sent = []
     def fake_http_request(conn, method, url, body=None, headers=None, *, encode_chunked=False): sent.append(headers['X-API-KEY'])
-    def fake_http_response(conn): return FakeResponse(402, 'quota exhausted') if sent[-1] == 'SECRET_S1' else FakeResponse(200, '{"organic": []}')
+    mode = 'quota'
+    def fake_http_response(conn):
+        if sent[-1] != 'SECRET_S1': return FakeResponse(200, '{"organic": []}')
+        return FakeResponse(400, 'Not enough credits') if mode == 'quota' else FakeResponse(429, 'Rate limit exceeded: requests per second')
     http.client.HTTPSConnection.request = fake_http_request
     http.client.HTTPSConnection.getresponse = fake_http_response
     module_path = Path(__file__).with_name('sitecustomize.py')
@@ -39,6 +42,17 @@ with tempfile.TemporaryDirectory() as directory:
     assert json.loads((p/'key_rotation_state.json').read_text())['jina']['exhausted'] == [0]
     logs = (p/'events.jsonl').read_text()
     assert 'SECRET_' not in logs
+    assert module.switchable(400, 'Not enough credits')
+    assert not module.switchable(400, 'invalid request')
     assert not module.switchable(429, 'requests per minute exceeded')
     assert module.switchable(429, 'credit balance exhausted')
+    # A temporary 429 may try the next key without exhausting either key.
+    state=json.loads((p/'key_rotation_state.json').read_text())
+    state['serper']={'current':0,'exhausted':[]}
+    (p/'key_rotation_state.json').write_text(json.dumps(state))
+    os.environ['QUEST_SERPER_RATE_LIMIT_ROTATE']='1';mode='rate';sent.clear()
+    conn=http.client.HTTPSConnection('google.serper.dev')
+    conn.request('POST','/search','{}',{}); result=conn.getresponse()
+    assert result.status==200 and sent==['SECRET_S1','SECRET_S2']
+    assert json.loads((p/'key_rotation_state.json').read_text())['serper']['exhausted']==[]
     print('PASS: Jina and Serper quota rotation, persistent state, rate-limit distinction, secret-free logs')

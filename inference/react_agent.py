@@ -6,6 +6,7 @@ if _quest_repo not in _quest_sys.path:
     _quest_sys.path.append(_quest_repo)
 from contrib.deepseek_data.dsml import normalize_dsml
 import json5
+import native_tools
 import os
 import sys
 import re
@@ -45,10 +46,21 @@ def extract_non_thinking_answer(content: str) -> Optional[str]:
     # An unfinished thinking block is not final output.
     visible = visible.split("<think>", 1)[0]
     matches = list(re.finditer(r"<answer>((?:(?!<answer>|</answer>)[\s\S])*?)</answer>", visible))
+    # Tags in fenced examples are not a model's final answer. Retain code
+    # fences inside an actual answer.
+    fences = list(re.finditer(r'```[^\n]*\n.*?```', visible, flags=re.DOTALL))
+    matches = [match for match in matches if not any(f.start() <= match.start() < f.end() for f in fences)]
     if not matches:
         return None
     answer = matches[-1].group(1).strip()
     return answer or None
+
+
+def visible_tool_calls(content: str) -> List[str]:
+    """Return only tool calls outside thinking and fenced examples."""
+    visible = content.rsplit('</think>', 1)[-1].split('<think>', 1)[0]
+    visible = re.sub(r'```[^\n]*\n.*?```', '', visible, flags=re.DOTALL)
+    return re.findall(r'<tool_call>(.*?)</tool_call>', visible, re.DOTALL)
 
 
 OBS_START = '<tool_response>'
@@ -166,16 +178,30 @@ def build_system_prompt(enable_python_tool: bool) -> str:
         prompt = BROWSECOMP_PLUS_SYSTEM_PROMPT
     else:
         prompt = SYSTEM_PROMPT
+    if native_tools.enabled():
+        visit_disabled = os.getenv('DISABLE_VISIT_TOOL', '').lower() in {'1', 'true', 'yes'}
+        if visit_disabled:
+            prompt = _apply_visit_disabled_text_overrides(prompt)
+        return native_tools.system_prompt(prompt, visit_disabled)
     if SCHOLAR_TOOL_ENABLED:
         prompt = prompt.replace("</tools>", f"{SCHOLAR_TOOL_PROMPT}</tools>")
+    tool_prompt_profile = os.environ.get('QUEST_TOOL_PROMPT_PROFILE', '').strip()
     if enable_python_tool:
-        prompt = prompt.replace("\n</tools>", f"\n{PYTHON_TOOL_PROMPT}</tools>", 1)
+        if tool_prompt_profile:
+            from tool_prompt_plugin import PYTHON_SCHEMA
+            python_prompt = json.dumps(PYTHON_SCHEMA, ensure_ascii=False) + '\n'
+        else:
+            python_prompt = PYTHON_TOOL_PROMPT
+        prompt = prompt.replace("\n</tools>", f"\n{python_prompt}</tools>", 1)
     visit_disabled = os.environ.get("DISABLE_VISIT_TOOL", "").lower() in ("1", "true", "yes")
     if visit_disabled:
         prompt = re.sub(r'\{"type": "function", "function": \{"name": "visit".*?\}\}\n?', '', prompt)
         if "</tools>" in prompt:
             prompt = prompt.replace("</tools>", "</tools>" + _visit_disabled_notice(), 1)
         prompt = _apply_visit_disabled_text_overrides(prompt)
+    if tool_prompt_profile:
+        from tool_prompt_plugin import apply
+        prompt = apply(prompt, tool_prompt_profile)
     return prompt
 
 
@@ -379,12 +405,24 @@ class MultiTurnReactAgent(FnCallAgent):
         try:
             tool_call = json.loads(json_part)
         except Exception:
-            raw_tool_name = ["__invalid_tool_call_json__", raw_tool_call]
-            return (
-                None,
-                None,
-                f"[Tool Error] Invalid tool call format: name must be string, got {raw_tool_name!r}",
-            )
+            tool_call = None
+            if os.getenv('QUEST_REPAIR_TOOL_JSON', '').lower() == 'true' and extracted_code is None:
+                from tool_call_repair import append_missing_object_brace
+                tool_call = append_missing_object_brace(json_part)
+                if tool_call is not None:
+                    print('[Tool JSON repair] appended one missing closing brace; original tool call retained', flush=True)
+            if tool_call is None and os.getenv('QUEST_REPAIR_TOOL_ARRAY_BRACKET', '').lower() == 'true' and extracted_code is None:
+                from tool_call_repair import insert_missing_array_bracket
+                tool_call = insert_missing_array_bracket(json_part)
+                if tool_call is not None:
+                    print('[Tool JSON repair] inserted one missing array bracket; original tool call retained', flush=True)
+            if tool_call is None:
+                raw_tool_name = ["__invalid_tool_call_json__", raw_tool_call]
+                return (
+                    None,
+                    None,
+                    f"[Tool Error] Invalid tool call format: name must be string, got {raw_tool_name!r}",
+                )
 
         # Align with training-side parser:
         # - dict: read {"name", "arguments"}
@@ -711,7 +749,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             content = msg.get("content", "")
             if role == "user" and first_user_idx is None:
                 first_user_idx = i
-            if role == "user" and isinstance(content, str) and content.startswith(OBS_START) and content.rstrip().endswith("</tool_response>"):
+            if role == "tool" or (role == "user" and isinstance(content, str) and content.startswith(OBS_START) and content.rstrip().endswith("</tool_response>")):
                 tool_response_indices.append(i)
 
         if first_user_idx is None:
@@ -736,6 +774,10 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
             role = msg.get("role")
             content = msg.get("content", "")
+            if role == 'tool' and i != latest_tool_response_idx:
+                pruned_messages.append(dict(msg, content='[Earlier tool result omitted from context]'))
+                removed_tool_results += 1
+                continue
             if role == "user" and isinstance(content, str) and content.startswith(OBS_START) and content.rstrip().endswith("</tool_response>"):
                 if i == latest_tool_response_idx:
                     pruned_messages.append(copy.deepcopy(msg))
@@ -798,11 +840,8 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             events = []
             for msg in messages:
                 role = msg.get("role", "")
-                if role in ["user", "assistant"]:
-                    events.append({
-                        "role": role,
-                        "content": msg.get("content", "")
-                    })
+                if role in ["user", "assistant", "tool"]:
+                    events.append(copy.deepcopy(msg))
             
             # Call the condenser tool
             condenser_tool = TOOL_MAP.get("condenser")
@@ -964,8 +1003,10 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
         return None
 
-    def call_server(self, msgs, max_tries=10):
+    def call_server(self, msgs, max_tries=10, *, allow_tools=True, structured_final=False):
 
+        if native_tools.enabled() and os.getenv("QUEST_DEEPSEEK_TEACHER") == "1":
+            raise ValueError("Native tool mode is configured for vLLM, not the legacy teacher transport")
         if os.getenv("QUEST_DEEPSEEK_TEACHER") == "1":
             client = OpenAI(api_key=os.environ["DEEPSEEK_API_KEY"], base_url=os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1"), timeout=600.0)
             response = None
@@ -1011,19 +1052,47 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                     api_key=openai_api_key,
                     base_url=openai_api_base,
                     timeout=600.0,
+                    max_retries=0,
                 )
+                tl.policy_http_attempts = getattr(tl, 'policy_http_attempts', 0) + 1
+                if attempt:
+                    tl.policy_http_retries = getattr(tl, 'policy_http_retries', 0) + 1
                 max_tokens = int(os.getenv('LLM_MAX_TOKENS', '10000'))
+                tool_options = ({'tools': native_tools.tool_schemas(TOOL_MAP),
+                                 'tool_choice': 'auto' if allow_tools else 'none',
+                                 'parallel_tool_calls': False}
+                                if native_tools.enabled() else
+                                {'stop': ["\n<tool_response>", "<tool_response>"]})
+                reasoning_effort = os.getenv('QUEST_REASONING_EFFORT', '').strip()
+                if reasoning_effort and not structured_final:
+                    if reasoning_effort not in ('low', 'medium', 'high', 'xhigh'):
+                        raise ValueError('Unsupported QUEST_REASONING_EFFORT')
+                    tool_options['extra_body'] = {'reasoning_effort': reasoning_effort}
+                if structured_final:
+                    tool_options['response_format'] = {'type': 'json_schema', 'json_schema': {
+                        'name': 'final_answer', 'strict': True, 'schema': {
+                            'type': 'object', 'properties': {'answer': {'type': 'string', 'minLength': 1}},
+                            'required': ['answer'], 'additionalProperties': False}}}
+                    tool_options['extra_body'] = {'chat_template_kwargs': {'enable_thinking': False}}
+                    max_tokens = int(os.getenv('QUEST_FINAL_MAX_TOKENS', '2048'))
                 chat_response = client.chat.completions.create(
                     model=tl.model,
-                    messages=msgs,
-                    stop=["\n<tool_response>", "<tool_response>"],
+                    messages=native_tools.prepare_messages(msgs) if native_tools.enabled() else msgs,
+                    **tool_options,
                     temperature=self.llm_generate_cfg.get('temperature', 0.6),
                     top_p=self.llm_generate_cfg.get('top_p', 0.95),
                     logprobs=True,
                     max_tokens=max_tokens,
                     presence_penalty=self.llm_generate_cfg.get('presence_penalty', 1.1)
                 )
-                content = chat_response.choices[0].message.content
+                choice = chat_response.choices[0]
+                if native_tools.enabled():
+                    content = native_tools.NativeResponse(choice.message, choice.finish_reason)
+                    if content or content.message.get("tool_calls"):
+                        tl.endpoint_failure_count = 0
+                        return content
+                else:
+                    content = choice.message.content
 
                 # OpenRouter provides API calling. If you want to use OpenRouter, you need to uncomment line 89 - 90.
                 # reasoning_content = "<think>\n" + chat_response.choices[0].message.reasoning.strip() + "\n</think>"
@@ -1075,7 +1144,10 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
     def count_tokens(self, messages):
         if self._tokenizer is None:
             self._tokenizer = AutoTokenizer.from_pretrained(self.llm_local_path)
-        full_prompt = self._tokenizer.apply_chat_template(messages, tokenize=False)
+        full_prompt = self._tokenizer.apply_chat_template(
+            native_tools.prepare_messages(messages, for_template=True) if native_tools.enabled() else messages,
+            tokenize=False,
+            **({"tools": native_tools.tool_schemas(TOOL_MAP)} if native_tools.enabled() else {}))
         tokens = self._tokenizer(full_prompt, return_tensors="pt")
         token_count = len(tokens["input_ids"][0])
 
@@ -1112,12 +1184,18 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
         resume_num_rounds = int(data.get("resume_num_rounds") or 0)
         resume_enabled = isinstance(resume_messages, list) and len(resume_messages) > 0
 
+        tl.policy_http_attempts = 0
+        tl.policy_http_retries = 0
+        tl.policy_call_counts = {'research': 0, 'final': 0, 'correction': 0}
+
         def attach_resume_metadata(result: Dict) -> Dict:
+            result['policy_call_counts'] = dict(tl.policy_call_counts, http_attempts=tl.policy_http_attempts, http_retries=tl.policy_http_retries)
             if resume_enabled:
                 result["resumed_from_messages"] = True
                 result["resume_start_num_rounds"] = resume_num_rounds
                 result["resume_previous_termination"] = data.get("resume_previous_termination")
                 result["resume_previous_prediction"] = data.get("resume_previous_prediction")
+                result["resume_memory_state_restored"] = isinstance(data.get('resume_memory_state'),dict)
             return result
 
         # Save the current question for trajectory persistence(thread-local)
@@ -1242,6 +1320,11 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
         if resume_enabled:
             messages = copy.deepcopy(resume_messages)
+            if native_tools.enabled():
+                # Keep old text trajectories as context, but replace their transport instructions.
+                messages[0] = {"role": "system", "content": system_prompt}
+            if isinstance(data.get('resume_memory_state'),dict):
+                tl.memory_state=copy.deepcopy(data['resume_memory_state'])
             print(
                 f"[Resume] Continuing from saved messages: "
                 f"message_count={len(messages)}, start_num_rounds={resume_num_rounds}, "
@@ -1251,14 +1334,60 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
         # Initialize the full message history (not compressed by condenser), used for trajectory_no_memory
         tl.full_messages = copy.deepcopy(messages)
-        num_llm_calls_available = max(0, MAX_LLM_CALL_PER_RUN - resume_num_rounds)
+        native_final = native_tools.enabled()
+        reserve = min(3, MAX_LLM_CALL_PER_RUN) if native_final else 0
+        num_llm_calls_available = max(0, MAX_LLM_CALL_PER_RUN - reserve - resume_num_rounds)
         round = resume_num_rounds
+
+        def finalize(reason):
+            remaining = max(0, MAX_LLM_CALL_PER_RUN - round)
+            prompt = ('Research is complete. Do not call tools. Using only the evidence already obtained, '
+                      'return a JSON object with an answer string in the requested format. '
+                      'If evidence is insufficient, use "Unknown".')
+            for index in range(min(3, remaining)):
+                user = {'role': 'user', 'content': prompt}
+                messages.append(user); tl.full_messages.append(copy.deepcopy(user))
+                phase = 'final' if index == 0 else 'correction'
+                tl.policy_call_counts[phase] += 1
+                response = self.call_server(messages, allow_tools=False, structured_final=True)
+                raw = str(response or '')
+                raw_msg = {'role': 'assistant', 'content': raw}
+                messages.append(raw_msg); tl.full_messages.append(copy.deepcopy(raw_msg))
+                try:
+                    parsed = json.loads(raw)
+                    value = parsed['answer'] if isinstance(parsed, dict) and set(parsed) == {'answer'} else None
+                    if not isinstance(value, str) or not value.strip() or '</answer>' in value or '<answer>' in value:
+                        raise ValueError('invalid answer field')
+                    if getattr(response, 'finish_reason', None) == 'length':
+                        raise ValueError('truncated final output')
+                except (ValueError, KeyError, TypeError):
+                    prompt = 'The previous output was invalid. Return only a JSON object with a nonempty answer string.'
+                    continue
+                prediction = value.strip()
+                wrapped = {'role': 'assistant', 'content': '<answer>' + prediction + '</answer>'}
+                messages.append(wrapped); tl.full_messages.append(copy.deepcopy(wrapped))
+                return prediction, 'generate an answer as ' + reason
+            return 'answer not found.', 'answer not found.'
+
+        def finalized_result(reason):
+            prediction, termination = finalize(reason)
+            if self.memory_enabled and tl.task_log_dir:
+                self._save_trajectory_for_distillation(messages, state=tl.memory_state, trigger_reason=reason, round_num=round, is_final=True)
+            return attach_resume_metadata({'question': question, 'answer': answer, 'messages': messages,
+                                           'prediction': prediction, 'termination': termination,
+                                           'num_rounds': round, 'task_log_dir': tl.task_log_dir,
+                                           'filename': tl.current_filename})
+
+        if native_final and num_llm_calls_available == 0:
+            return finalized_result('llm_call_limit')
         # Note:memory state has already been reset at the start of the function, so it does not need to be reset again here
         
         while num_llm_calls_available > 0:
             # Check whether time is reached
             max_minutes = int(os.getenv('MAX_RUNTIME_MINUTES', '1440'))
             if time.time() - start_time > max_minutes * 60:
+                if native_final:
+                    return finalized_result('runtime_limit')
                 prediction = f'No answer found after {max_minutes}min'
                 termination = f'No answer found after {max_minutes}min'
                 
@@ -1294,18 +1423,30 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             num_llm_calls_available -= 1
             # Reset the CONTEXT_THRESHOLD trigger flag at the start of each round so it can trigger again in the new round
             tl.context_threshold_triggered = False
+            tl.policy_call_counts['research'] += 1
             content = self.call_server(messages)   #todo!!raw initial answer; may contain URLs in tool calls
             print(f'Round {round}: {content}')
-            if '<tool_response>' in content:
+            if not native_tools.enabled() and '<tool_response>' in content:
                 pos = content.find('<tool_response>')
                 content = content[:pos]
-            assistant_msg = {"role": "assistant", "content": content.strip()}
+            assistant_msg = native_tools.assistant_message(content)
             messages.append(assistant_msg)
             tl.full_messages.append(copy.deepcopy(assistant_msg))  # Sync to the full message history
             
-            if '<tool_call>' in content and '</tool_call>' in content:
-                matches = list(re.finditer(r"<tool_call>(.*?)</tool_call>", content, re.DOTALL))
-                raw_tool_call = matches[-1].group(1).strip()
+            action_calls = (assistant_msg.get('tool_calls', []) if native_tools.enabled()
+                            else visible_tool_calls(content))
+            if native_tools.enabled() and action_calls:
+                for tool_message in native_tools.execute_calls(
+                        content, native_tools.tool_schemas(TOOL_MAP), self.custom_call_tool):
+                    messages.append(tool_message)
+                    tl.full_messages.append(copy.deepcopy(tool_message))
+            elif native_tools.enabled() and visible_tool_calls(content):
+                correction = {'role': 'user', 'content':
+                              'Use the API tool calling interface. Textual tool calls were not executed.'}
+                messages.append(correction)
+                tl.full_messages.append(copy.deepcopy(correction))
+            elif action_calls:
+                raw_tool_call = action_calls[-1].strip()
                 tool_name, tool_args, tool_error = self._normalize_tool_call(raw_tool_call)
 
                 if tool_error is not None:
@@ -1336,9 +1477,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             print(f"round: {round}, token count: {token_count}, dynamic threshold: {dynamic_threshold}")
 
             # Check whether <answer> has already appeared; if so, no further summary is needed
-            has_answer = False
-            if '<answer>' in content and '</answer>' in content:
-                has_answer = True
+            has_answer = bool(extract_non_thinking_answer(content)) and not action_calls
 
             # Trigger 2: CONTEXT_THRESHOLD - When the token count reaches the dynamic threshold, call condenser directly
             # Check after completing the tool call and tool response, and use a flag to avoid repeated triggers(within the same round)
@@ -1401,10 +1540,14 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                         tl.context_threshold_triggered = False
 
             
-            if '<answer>' in content and '</answer>' in content:
+            if has_answer:
+                if native_final:
+                    return finalized_result('answer_ready')
                 termination = 'answer'
                 break
-            if num_llm_calls_available <= 0 and '<answer>' not in content:
+            if num_llm_calls_available <= 0 and not has_answer:
+                if native_final:
+                    return finalized_result('llm_call_limit')
                 print("LLM call count reached the limit, forcing a final answer.")
 
                 llm_call_limit_prompt = (
@@ -1413,15 +1556,44 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                     "think again and provide what you consider the most likely answer in the "
                     "following format:<think>your final thinking</think>\n<answer>your answer</answer>"
                 )
+                if os.getenv('QUEST_DEEPSEEK_TEACHER') == '1':
+                    llm_call_limit_prompt = (
+                        'The research turn limit has been reached. Do not call tools or output thinking tags. '
+                        'Give the complete answer in one <answer>...</answer> block, '
+                        'prioritizing the requested evidence and keeping it within 1800 words.'
+                    )
                 user_limit_msg = {"role": "user", "content": llm_call_limit_prompt}
                 messages.append(user_limit_msg)
                 tl.full_messages.append(copy.deepcopy(user_limit_msg))  # Sync to the full message history
-                content = self.call_server(messages)
+                content = self.call_server(messages, allow_tools=False) or ""
                 final_assistant_msg = {"role": "assistant", "content": content.strip()}
                 messages.append(final_assistant_msg)
                 tl.full_messages.append(copy.deepcopy(final_assistant_msg))  # Sync to the full message history
 
-                if '<answer>' in content and '</answer>' in content:
+                teacher_mode = os.getenv('QUEST_DEEPSEEK_TEACHER') == '1'
+                retry_limit = 2 if teacher_mode else max(0, min(2, int(os.getenv('QUEST_FINAL_ANSWER_RETRIES', '0'))))
+                for _ in range(retry_limit):
+                    if extract_non_thinking_answer(content):
+                        break
+                    if teacher_mode:
+                        correction = ("Your previous response did not contain a valid final answer outside thinking tags. "
+                                      "Using your research above, give the complete answer again inside one "
+                                      "<answer>...</answer> block, within 1800 words. "
+                                      "Include both tags and do not use thinking tags or call tools.")
+                    else:
+                        correction = ("The research turn limit has been reached. Do not call any tools. "
+                                      "Using only the information already available, give your best final answer "
+                                      "inside one <answer>...</answer> block and follow the question's requested format.")
+                    print('[Final answer] Retrying final-answer format without executing tools', flush=True)
+                    format_msg = {"role": "user", "content": correction}
+                    messages.append(format_msg)
+                    tl.full_messages.append(copy.deepcopy(format_msg))
+                    content = self.call_server(messages, allow_tools=False) or ""
+                    final_assistant_msg = {"role": "assistant", "content": content.strip()}
+                    messages.append(final_assistant_msg)
+                    tl.full_messages.append(copy.deepcopy(final_assistant_msg))
+
+                if extract_non_thinking_answer(content):
                     prediction = extract_non_thinking_answer(messages[-1]['content']) or 'answer not found.'
                     termination = 'generate an answer as llm call limit reached'
                 else:
@@ -1454,13 +1626,15 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 return attach_resume_metadata(result)
 
             if token_count > max_tokens:
+                if native_final:
+                    return finalized_result('token_limit')
                 print(f"Token quantity exceeds the limit: {token_count} > {max_tokens}")
 
                 token_limit_prompt = "You have now reached the maximum context length you can handle. You should stop making tool calls and, based on all the information above, think again and provide what you consider the most likely answer in the following format:<think>your final thinking</think>\n<answer>your answer</answer>"
                 user_limit_msg = {"role": "user", "content": token_limit_prompt}
                 messages.append(user_limit_msg)
                 tl.full_messages.append(copy.deepcopy(user_limit_msg))  # Sync to the full message history
-                content = self.call_server(messages)
+                content = self.call_server(messages, allow_tools=False)
                 final_assistant_msg = {"role": "assistant", "content": content.strip()}
                 messages.append(final_assistant_msg)
                 tl.full_messages.append(copy.deepcopy(final_assistant_msg))  # Sync to the full message history

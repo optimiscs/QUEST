@@ -105,6 +105,7 @@ You are operating in an offline evaluation setting with a fixed document corpus.
 - The visit tool can ONLY open bm25://<docid> URLs from search results. External URLs (https://, http://) will fail.
 - Do NOT attempt to visit Wikipedia, Google, or any other external website.
 - When search returns relevant documents, use visit to read their full content via the bm25:// links before drawing conclusions.
+- In the final answer, cite supporting corpus documents inline as numeric IDs in square brackets, for example [12345]. Use only IDs actually returned by search; do not invent citations.
 
 # Using prev_state (Research State Summary)
 

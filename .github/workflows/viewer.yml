@@ -1,0 +1,60 @@
+name: Viewer
+on:
+  push:
+    paths: ['web/**', '.github/workflows/viewer.yml']
+  pull_request:
+    paths: ['web/**', '.github/workflows/viewer.yml']
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: quest
+          POSTGRES_PASSWORD: quest
+          POSTGRES_DB: quest_viewer_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U quest -d quest_viewer_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      VIEWER_DATABASE_URL: postgresql+psycopg://quest:quest@127.0.0.1:5432/quest_viewer_test
+      VIEWER_TEST_DATABASE_URL: postgresql+psycopg://quest:quest@127.0.0.1:5432/quest_viewer_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.13.6'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+      - run: uv sync --project web/backend --locked
+      - run: npm ci
+        working-directory: web/frontend
+      - run: uv run --project web/backend ruff check web/backend web/scripts
+      - run: uv run --project web/backend ruff format --check web/backend web/scripts
+      - run: uv run --project web/backend python web/scripts/export-openapi.py
+      - run: npm run generate && git diff --exit-code -- src/api/generated.ts ../backend/openapi.json
+        working-directory: web/frontend
+      - run: npm run lint && npm run build && npm test
+        working-directory: web/frontend
+      - run: uv run --project web/backend alembic -c web/backend/alembic.ini upgrade head
+      - run: uv run --project web/backend pytest web/backend/tests -q
+      - run: uv run --project web/backend python web/scripts/seed-test-data.py
+      - run: npx playwright install --with-deps chromium
+        working-directory: web/frontend
+      - run: |
+          uv run --project web/backend uvicorn quest_viewer.app:create_app --factory --port 6081 > /tmp/viewer.log 2>&1 &
+          for i in $(seq 1 30); do curl --fail -s http://127.0.0.1:6081/api/v1/health/ready && break; sleep 1; done
+      - run: npm run test:e2e
+        working-directory: web/frontend
+        env:
+          FONTCONFIG_FILE: ${{ github.workspace }}/web/frontend/tests/fontconfig.conf
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: viewer-browser-results
+          path: workspace/viewer/test-results

@@ -176,6 +176,7 @@ if __name__ == "__main__":
                                     "num_rounds": int(data.get("num_rounds") or 0),
                                     "previous_termination": data.get("termination"),
                                     "previous_prediction": data.get("prediction"),
+                                    "memory_state": data.get("memory_state"),
                                 }
                                 if filename_key:
                                     current = resume_by_filename.get(filename_key)
@@ -270,6 +271,7 @@ if __name__ == "__main__":
                     "resume_num_rounds": resume_record["num_rounds"],
                     "resume_previous_termination": resume_record["previous_termination"],
                     "resume_previous_prediction": resume_record["previous_prediction"],
+                    "resume_memory_state": resume_record.get("memory_state"),
                 })
             tasks_to_run_all.append(task)
             per_rollout_task_counts[rollout_idx] += 1

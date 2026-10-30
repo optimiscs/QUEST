@@ -23,6 +23,45 @@ Supported benchmark launchers:
 | Mind2Web2 | `scripts/run_react_infer_m2w2.sh` | Set `DATASET` to your Mind2Web2 test file |
 | WideSearch | `scripts/run_react_infer_ws.sh` | `../evaluation/widesearch/widesearch_en_input.jsonl` |
 
+## Native vLLM tool calls
+
+Set `QUEST_NATIVE_TOOL_CALLS=true` for API-level `tools` / `tool_calls` instead
+of extracting JSON from assistant text. The BrowseComp 25% controller enables
+this for newly launched agents; other launchers retain their existing default.
+Set it to `false` to replay the legacy text protocol.
+
+For the installed vLLM 0.32.0 and Qwen3.5, serve with:
+
+```bash
+export VLLM_ENFORCE_STRICT_TOOL_CALLING=true
+# Add these flags to the existing vllm serve command:
+# --enable-auto-tool-choice --tool-call-parser qwen3_coder
+# --reasoning-parser qwen3 --tool-strict-level parameter
+```
+
+`start_retrieval_ab_4b.sh` includes these flags. Existing server processes must
+be restarted to pick up changes. Other model families need their matching
+parser and chat template; native mode is not enabled for the DeepSeek teacher
+transport. `auto` without strict decoding support is not a JSON guarantee.
+
+The tools use `search(query: string[])`, `visit(url: string[], goal: string)`,
+and `PythonInterpreter(code: string)`. Python code is inside the arguments,
+with no separate code tags. Calls are schema-validated before execution;
+invalid or truncated calls receive a paired tool error. Finalization uses
+`tool_choice="none"`. Trajectories and memory retain tool call IDs and results.
+The legacy tool-prompt profile is ignored in native mode.
+
+Check a running endpoint without calling external search/page/sandbox services:
+
+```bash
+workspace/env/bin/python inference/scripts/check_native_tools.py \
+  --base-url http://127.0.0.1:18210/v1 --model QWEN35-SFT10
+```
+
+This uses real model generations and explicitly synthetic tool results to
+check all three schemas, tool-result replay, and finalization. It does not
+measure benchmark accuracy or external service availability.
+
 ## Setup
 
 Complete the root-level environment setup first. Then configure external
@@ -110,3 +149,12 @@ the same script with the same output and log paths.
 Add a dataset file that matches the input format expected by `run_multi_react.py`,
 then create or adapt a `scripts/run_react_infer_*.sh` launch script. Keep scoring and
 judge logic under [`../evaluation/`](../evaluation/).
+
+In native mode the policy-call limit includes the final response: up to three
+calls are reserved for final JSON and format correction. A 100-call budget
+therefore allows at most 97 research calls. Final generation disables tools and
+validates a JSON `answer` string before wrapping it in `<answer>` tags. The
+result's `policy_call_counts` reports research, final, correction, HTTP attempts
+and HTTP retries; SDK-level retries are disabled so attempts remain observable.
+A resumed run accounts for its recorded prior research rounds; prior HTTP
+attempts and any unrecorded final calls cannot be reconstructed.
