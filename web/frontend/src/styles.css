@@ -2126,3 +2126,37 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 /* Numeric benchmark scores do not imply a pass/fail threshold. */
 .task-status-dot.is-scored, .judge-tag.is-scored i { background: #5879a3; }
 .judge-tag.is-scored { color: #42658e; }
+
+/* Statistics for the selected trajectory. Cards open above the status bar. */
+.session-status {
+  display: flex; align-items: center; gap: 6px; min-height: 34px; flex: 0 0 34px;
+  padding: 0 18px; border-top: 1px solid var(--line); background: #fafbfc; color: #77818e;
+}
+.session-status-item { position: relative; min-width: 0; }
+.session-status-button {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 5px 9px;
+  border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit;
+  font-size: 11px; white-space: nowrap; cursor: pointer;
+}
+.session-status-button span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.session-status-button:hover, .session-status-button[aria-expanded="true"] { background: #eceef1; color: #3b4757; }
+.session-status-button:focus-visible { outline: 2px solid #5c82e9; outline-offset: 1px; }
+.session-card {
+  position: absolute; z-index: 35; left: 0; bottom: calc(100% + 9px); width: 340px;
+  max-width: calc(100vw - 32px); padding: 18px 20px; border: 1px solid #e4e7ea;
+  border-radius: 16px; background: #fcfcfd; box-shadow: 0 8px 32px rgba(30, 40, 55, .13); color: #818993;
+}
+.session-card[hidden] { display: none; }
+.session-card h3 { display: flex; align-items: center; gap: 5px; margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid #e8eaed; color: #1d232b; font-size: 14px; font-weight: 600; }
+.session-card h3 strong { margin-left: auto; font-size: 13px; font-weight: 600; }
+.session-card-row { display: flex; justify-content: space-between; gap: 16px; padding: 6px 0; font-size: 12px; }
+.session-card-row strong { color: #5e6772; font-weight: 500; text-align: right; }
+.session-card-note { margin: 10px 0 0; color: #9aa2ab; font-size: 10px; line-height: 1.5; }
+.session-progress { height: 5px; margin: 4px 0 12px; overflow: hidden; border-radius: 5px; background: #e9ebee; }
+.session-progress i { display: block; height: 100%; background: #628ef3; }
+@media (max-width: 700px) {
+  .session-status { gap: 2px; padding: 0 6px; overflow: visible; }
+  .session-status-button { gap: 4px; padding: 5px; font-size: 9px; }
+  .session-status-item { flex: 1 1 0; }
+  .session-card, .session-status-item:last-child .session-card { position: fixed; right: 12px; bottom: 44px; left: 12px; width: auto; max-width: none; }
+}

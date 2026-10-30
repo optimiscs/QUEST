@@ -174,6 +174,17 @@ for i in range(cli.requested_cases):
     display_answer=matches[-1].strip();display_note='从模型最终输出的 Exact Answer 提取用于展示；原生预测未识别，原始输出和评分不变'
  counts=collections.Counter(x['kind'] for x in steps);n=len(steps);querycount=sum(len(x['tool'].get('queries',[])) for x in steps if x['kind']=='search' and x['tool']);pages=sum(len(x['tool'].get('pages',[])) for x in steps if x['kind']=='read' and x['tool'])
  cases.append({'inProgress':state.get('agent_state')=='running','interrupted':state.get('agent_state')=='interrupted','id':f'trace-{i+1:02d}','index':i+1,'field':cli.benchmark,'fieldZh':cli.benchmark,'topic':case,'topicZh':case,'question':native.get('question',''),'answer':display_answer,'answerNote':('未完成轨迹的时长为已记录事件窗口，不含暂停时间' if state.get('agent_state')=='running' and cli.stopped_at is not None else display_note),'judge':str(state.get('judgment','')),'correct':(state.get('is_correct') is True) if scored else None,'score':state.get('score') if state.get('judge_state')=='scored_numeric' else None,'scoredDimensions':state.get('judge_state')=='scored_dimensions','rounds':rounds,'durationSeconds':duration,'durationText':f'{int(duration//60)}m {int(duration%60)}s','model':label,'risk':{'level':{'confirmed_answer_exposure':'alert','potential_benchmark_source_exposure':'warn','none_detected':'clean'}.get(audit_rows.get(case,{}).get('contamination_status'),'unknown'),'label':audit_rows.get(case,{}).get('contamination_status','not_audited')},'riskKey':audit_rows.get(case,{}).get('contamination_status','not_audited'),'stats':{'steps':n,'searchCalls':counts['search'],'readCalls':counts['read'],'computeCalls':counts['compute'],'searchQueries':querycount,'resultsScanned':sum(x['tool'].get('resultCount',0) for x in steps if x['kind']=='search' and x['tool']),'pagesRead':pages,'uniqueSources':len(sources),'uniqueDomains':len(domains),'maxPromptTokens':0,'maxOutputTokens':0,'averageStepSeconds':duration/n,'longestStepSeconds':max((x['model_seconds']+x['tool_seconds'] for x in steps),default=0)},'timing':case_time,'domains':[{'domain':k,'count':v} for k,v in domains.most_common()],'steps':steps,'finalAnswer':raw_final or prediction,'keyIndices':[],'sources':sorted(sources)})
+ # Aggregate only complete policy-model usage; never interpret missing fields as zero.
+ usage_rows=[e['api_response'].get('usage') if isinstance(e.get('api_response'),dict) else None for _,e in policies]
+ valid_number=lambda x:isinstance(x,int) and not isinstance(x,bool) and x>=0
+ if usage_rows and all(isinstance(u,dict) and valid_number(u.get('prompt_tokens')) and valid_number(u.get('completion_tokens')) for u in usage_rows):
+  prompt_tokens=sum(u['prompt_tokens'] for u in usage_rows); output_tokens=sum(u['completion_tokens'] for u in usage_rows)
+  usage={'inputTokens':prompt_tokens,'outputTokens':output_tokens,'totalTokens':prompt_tokens+output_tokens}
+  cached=[u.get('prompt_tokens_details',{}).get('cached_tokens') if isinstance(u.get('prompt_tokens_details'),dict) else None for u in usage_rows]
+  if all(valid_number(v) and v<=u['prompt_tokens'] for v,u in zip(cached,usage_rows)):
+   usage['cachedInputTokens']=sum(cached);usage['uncachedInputTokens']=prompt_tokens-sum(cached)
+  cases[-1]['sessionStats']={'usage':usage}
+ cases[-1].setdefault('sessionStats',{})['toolSeconds']=round(timing['tool'],3) if stats['tool'] else None
  _gt=gt_rows.get(norm_gt(native.get('question','')))
  if _gt:
   cases[-1]['groundTruth']=txt(_gt.get('answer',''))

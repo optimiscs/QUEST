@@ -65,3 +65,5 @@ npm run test:e2e
 详情核对：`workspace/viewer/venv/bin/python web/scripts/verify-import.py`。真实大型数据测试设置 `VIEWER_REAL_DATA=1` 后运行浏览器测试。性能采样工具是 `frontend/tests/performance/benchmark.mjs`。
 
 部署、备份与回退见 [operations.md](docs/operations.md)，数据与事务设计见 [architecture.md](docs/architecture.md)。
+
+当前轨迹底部状态栏展示轮次、已展示事件数、模型及工具调用耗时；点击可查看用量与上下文卡片。`sessionStats` 可选字段支持 `usage.inputTokens`、`usage.outputTokens`、`usage.totalTokens`、`usage.cachedInputTokens`、`usage.uncachedInputTokens`、`modelSeconds`、`toolSeconds`、`ttftSeconds`、`outputTokensPerSecond`，以及 `context.usedTokens`、`context.capacityTokens`、`context.systemTokens`、`context.toolTokens`、`context.messageTokens`。缺失字段显示“未记录”，不会按 0 估算。由 `build_gaia.py` 新生成的轨迹只在所有已完成策略模型调用均有用量记录时汇总其 token；不包括摘要、记忆或其他辅助模型。输出速度未单独记录时，按策略模型输出 token 总数除以模型调用总耗时计算，包含首 token 等待时间。已有轨迹需重新生成并导入后才会包含新汇总，原始记录缺失的数据仍不可用。

@@ -8,6 +8,7 @@ import { escapeHTML, escapeAttr, safeURL, pad, number, pluralCount, formatSecond
 import './styles.css';
 import { getJSON, loadRun, loadTrace, runURL } from './api/client';
 import { TraceCache } from './state/trace-cache';
+import { deriveSessionStats, compactTokens } from './features/session-stats';
 
 
   const state = {
@@ -404,6 +405,35 @@ import { TraceCache } from './state/trace-cache';
 
   const { collectSources, overviewStateLabel, renderOverview } = createOverview({ state, dom, activeCase, riskInfo, caseState, judgeTag, icon, formatDuration, safeURL, escapeHTML, escapeAttr });
 
+  /* ---------- current task statistics ---------- */
+  const statusRoot = $("#sessionStatus");
+  const statusCards = ["Timing", "Tokens", "Context"].map(name => ({button: $(`#session${name}Button`), card: $(`#session${name}Card`)}));
+  function closeStatusCards() {
+    statusCards.forEach(({button, card}) => { card.hidden = true; button.setAttribute("aria-expanded", "false"); });
+  }
+  statusCards.forEach(({button, card}) => button.addEventListener("click", () => {
+    const opening = card.hidden;
+    closeStatusCards();
+    if (opening) { card.hidden = false; button.setAttribute("aria-expanded", "true"); }
+  }));
+  document.addEventListener("click", event => { if (!statusRoot.contains(event.target)) closeStatusCards(); });
+  document.addEventListener("keydown", event => { if (event.key === "Escape") closeStatusCards(); });
+  function renderSessionStats(trace) {
+    const s = deriveSessionStats(trace);
+    const num = value => value === null ? "未记录" : new Intl.NumberFormat("en-US").format(value);
+    const duration = value => value === null ? "未记录" : formatDuration(value);
+    const percent = value => value === null ? "未记录" : `${Math.round(value * 100)}%`;
+    const rate = s.tps === null ? "未记录" : `${s.tps.toFixed(1).replace(/\.0$/, "")} tok/s`;
+    const rows = pairs => pairs.map(([label, value]) => `<div class="session-card-row"><span>${label}</span><strong>${escapeHTML(value)}</strong></div>`).join("");
+    $("#sessionTimingSummary").textContent = `${s.rounds === null ? "轮次未记录" : `${num(s.rounds)} 轮`} · ${s.events === null ? "步数未记录" : `${num(s.events)} 步`} · ${rate}`;
+    $("#sessionTokensSummary").textContent = `${compactTokens(s.total)}${s.total === null ? "" : " tok"} · 缓存命中 ${percent(s.cacheRate)}`;
+    $("#sessionContextSummary").textContent = `上下文 ${percent(s.contextRate)}`;
+    $("#sessionTimingCard").innerHTML = `<h3>◴　会话统计</h3>${rows([["模型用时", duration(s.modelSeconds)], ["工具调用用时", duration(s.toolSeconds)], ["首 token 平均（TTFT）", duration(s.ttftSeconds)], ["输出速度（TPS）", rate]])}<p class="session-card-note">速度按模型调用总耗时计算；工具耗时为已记录调用。</p>`;
+    $("#sessionTokensCard").innerHTML = `<h3>▤　Token 用量 <strong>${s.total === null ? "未记录" : `${num(s.total)} tok`}</strong></h3>${rows([["缓存命中", percent(s.cacheRate)], ["未缓存输入", num(s.uncached)], ["缓存读取", num(s.cached)], ["输出", num(s.outputTokens)]])}`;
+    const progress = s.contextRate === null ? 0 : Math.min(100, s.contextRate * 100);
+    $("#sessionContextCard").innerHTML = `<h3>上下文已用 ${percent(s.contextRate)} <strong>${s.contextUsed === null || s.contextCapacity === null ? "未记录" : `${compactTokens(s.contextUsed)} / ${compactTokens(s.contextCapacity)}`}</strong></h3><div class="session-progress" role="progressbar" aria-label="上下文使用量" ${s.contextRate === null ? "" : `aria-valuenow="${Math.round(progress)}" aria-valuemin="0" aria-valuemax="100"`}><i style="width:${progress}%"></i></div>${rows([["系统提示词", num(s.systemTokens)], ["工具定义", num(s.toolTokens)], ["对话消息", num(s.messageTokens)]])}`;
+  }
+
   /* ---------- dock and summary ---------- */
 
   function renderDock() {
@@ -452,6 +482,7 @@ import { TraceCache } from './state/trace-cache';
     else renderedTrace = null;
     renderOverview();
     renderDock();
+    renderSessionStats(activeCase());
     const groundTruthAvailable = hasGroundTruth(activeCase());
     [dom.overviewGroundTruth, dom.viewGroundTruth].forEach((button) => {
       if (button) button.hidden = !groundTruthAvailable;

@@ -88,6 +88,8 @@ test('desktop and mobile match the original visual baselines', async ({ page }, 
   for (const [name, viewport] of Object.entries({ desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 } })) {
     await page.setViewportSize(viewport);
     await page.goto('/trace-viewer-zh/'); await loaded(page);
+    // Compare the unchanged original layout separately from the new status bar.
+    await page.addStyleTag({ content: '.session-status { display: none !important; }' });
     for (const mode of ['trajectory', 'overview']) {
       if (mode === 'overview') await page.locator('#tabOverview').click();
       const before = PNG.sync.read(await fs.readFile(new URL(`../visual/${name}-${mode}.png`, import.meta.url)));
@@ -109,4 +111,41 @@ test('large IDs resolve directly and request only the selected trace', async ({ 
   await expect(page.locator('.task-item.is-active .task-num')).toHaveText('245');
   expect(details).toHaveLength(1);
   expect(details[0]).toContain('/trace-245');
+});
+
+
+test('statistics cards use selected trace measurements and dismiss accessibly', async ({ page }) => {
+  const fixture = JSON.parse(await fs.readFile(new URL('../../../tests/fixtures/viewer.json', import.meta.url), 'utf8'));
+  fixture.cases[0].sessionStats = { usage: { inputTokens: 1000, cachedInputTokens: 800, outputTokens: 200 },
+    toolSeconds: 2, context: { usedTokens: 500, capacityTokens: 1000 } };
+  const summaries = fixture.cases.map(item => ({ id: item.id, index: item.index, topicZh: item.topicZh,
+    correct: item.correct, stats: item.stats, durationSeconds: item.durationSeconds, revision: 'fixture' }));
+  await page.route('**/api/v1/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    let body;
+    if (path === '/api/v1/runs') body = { datasets: [] };
+    else if (path === '/api/v1/workspace-status') body = { datasets: {} };
+    else if (/\/traces\/trace-/.test(path)) body = fixture.cases.find(item => path.endsWith('/' + item.id));
+    else if (path.endsWith('/traces')) body = { runRevision: 'fixture', items: summaries, nextCursor: null };
+    else body = { id: 'default-zh', revision: 'fixture', metadata: { hiddenDefault: true }, run: fixture.run, counts: {} };
+    return route.fulfill({ json: body, headers: { ETag: '"fixture"' } });
+  });
+  await page.goto('/trace-viewer-zh/'); await loaded(page);
+  await expect(page.locator('#sessionTokensSummary')).toContainText('1.2K tok');
+  await page.locator('#sessionTokensButton').click();
+  await expect(page.locator('#sessionTokensCard')).toContainText('800');
+  await expect(page.locator('#sessionTokensButton')).toHaveAttribute('aria-expanded', 'true');
+  await page.locator('#sessionContextButton').click();
+  await expect(page.locator('#sessionTokensCard')).toBeHidden();
+  await expect(page.locator('#sessionContextCard')).toContainText('50%');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#sessionContextCard')).toBeHidden();
+  await page.locator('[data-case="1"]').click();
+  await expect(page.locator('#sessionTokensSummary')).toContainText('未记录');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('#sessionTokensButton').click();
+  const bounds = await page.locator('#sessionTokensCard').boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
 });

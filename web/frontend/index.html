@@ -326,6 +326,11 @@
           </button>
         </div>
       </footer>
+      <div class="session-status" id="sessionStatus" aria-label="当前任务统计">
+        <div class="session-status-item"><button type="button" id="sessionTimingButton" class="session-status-button" aria-expanded="false" aria-controls="sessionTimingCard"><span aria-hidden="true">◴</span><span id="sessionTimingSummary">统计未记录</span></button><section class="session-card" id="sessionTimingCard" hidden></section></div>
+        <div class="session-status-item"><button type="button" id="sessionTokensButton" class="session-status-button" aria-expanded="false" aria-controls="sessionTokensCard"><span aria-hidden="true">▤</span><span id="sessionTokensSummary">Token 未记录</span></button><section class="session-card" id="sessionTokensCard" hidden></section></div>
+        <div class="session-status-item"><button type="button" id="sessionContextButton" class="session-status-button" aria-expanded="false" aria-controls="sessionContextCard"><span aria-hidden="true">◉</span><span id="sessionContextSummary">上下文未记录</span></button><section class="session-card" id="sessionContextCard" hidden></section></div>
+      </div>
     </main>
   </div>
 
