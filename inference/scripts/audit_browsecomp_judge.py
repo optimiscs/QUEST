@@ -18,6 +18,7 @@ def review_flags(receipt,visible,reference):
  match=re.search(r'(?im)^\s*extracted_final_answer:\s*(.*)$',receipt.get('raw') or '')
  extracted=norm(match.group(1)) if match else '';flags=[]
  if receipt.get('is_correct') is True and gold and gold not in visible_norm:flags.append('correct_but_reference_text_absent')
+ if receipt.get('is_correct') is True and match and match.group(1).strip().strip('"\'').casefold()=='none':flags.append('correct_without_extracted_answer')
  if gold and extracted==gold and gold not in visible_norm:flags.append('judge_extraction_equals_reference_but_absent_from_response')
  if receipt.get('is_correct') is False and gold:
   if gold in visible_norm:flags.append('incorrect_but_reference_text_present')

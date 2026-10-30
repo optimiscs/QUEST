@@ -40,3 +40,15 @@ def test_judge_input_excludes_thoughts_and_protocol_tool_queries():
  assert mod.visible_judge_response({'messages':[{'content':'<think>Secret Gold without a closing tag'}]})==''
  assert mod.visible_judge_response({'messages':[{'content':'<tool_call>{"name":"search","arguments":{"query":["Secret Gold"]}}</tool_call>'}]})==''
  assert mod.visible_judge_response({'messages':[{'content':'<think>candidate</think><answer>final</answer>\nConfidence: 90%'}]})=='<answer>final</answer>\nConfidence: 90%'
+
+
+def test_conflicting_none_and_yes_is_retried_with_full_judgment_preserved(tmp_path,monkeypatch):
+ from types import SimpleNamespace
+ (tmp_path/'configs').mkdir();(tmp_path/'checks').mkdir();(tmp_path/'configs/grader-template.txt').write_text('{question}|{correct_answer}|{response}')
+ result=tmp_path/'result.jsonl';result.write_text(json.dumps({'messages':[{'content':'I cannot identify the brand.'}]})+'\n')
+ replies=iter(['extracted_final_answer: None\ncorrect: yes','extracted_final_answer: None\ncorrect: no']);calls=[]
+ def create(**kwargs):calls.append(kwargs);return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=next(replies)))])
+ monkeypatch.setattr(mod,'RUN',tmp_path);monkeypatch.setattr(mod,'OpenAI',lambda **kwargs:SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))))
+ out=mod.judge('row0000',123,{'question':'Q','answer':'Dr Martens'},str(result))
+ assert out['is_correct'] is False and out['status']=='scored' and len(calls)==2
+ assert out['initial_raw'].endswith('correct: yes') and out['raw'].endswith('correct: no')

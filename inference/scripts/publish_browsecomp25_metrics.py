@@ -11,7 +11,9 @@ def explicit_tool_error(output, tool_name):
  if s.lstrip().startswith(('[Tool Error]','[Visit Error]','[Search Error]','[Python Error]')):return True
  # Batched search joins per-query results with blank lines, so an error may
  # follow an earlier successful query rather than appearing at the beginning.
- return tool_name=='search' and bool(re.search(r'(?:^|\n\n)\[Search Error\]',s))
+ if tool_name=='search':return bool(re.search(r'(?:^|\n\n)\[Search Error\]',s))
+ if tool_name=='visit':return bool(re.search(r'(?m)^\s*\[visit\] (?:Error|Failed|Empty content)',s))
+ return False
 def calc():
  rows=json.loads((RUN/'status.json').read_text())['cases'];c=collections.Counter();times=collections.defaultdict(list);states=collections.Counter();phases=collections.defaultdict(collections.Counter)
  for case,row in rows.items():
@@ -51,6 +53,11 @@ def calc():
     event,kind=x.get('event'),x.get('kind')
     if event=='span_start' and kind=='tool':starts[x.get('span_id')]=x.get('input',{}).get('tool_name')
     if event!='span_end':continue
+    if kind=='reader':
+     c['reader_calls']+=1;reader_output=str(x.get('output') or '')
+     if reader_output.startswith(('[visit] Error','[visit] Failed','[visit] Empty')):c['reader_error_returns']+=1
+     elif reader_output:c['reader_content_returns']+=1
+     else:c['reader_empty_returns']+=1
     if kind=='policy_model' and isinstance(x.get('output'),str):
      s=x['output'].rsplit('</think>',1)[-1].split('<think>',1)[0];s=re.sub(r'```[^\n]*\n.*?```','',s,flags=re.S);a=re.findall(r'<tool_call>(.*?)</tool_call>',s,re.S)
      if a:
@@ -60,6 +67,7 @@ def calc():
       except (ValueError,TypeError):pass
     elif kind=='tool':
      c['tool_returned']+=1;out=str(x.get('output') or '');c['tool_explicit_errors']+=explicit_tool_error(out,starts.get(x.get('span_id')))
+     name=starts.get(x.get('span_id'),'unknown');c['tool_returned_'+name]+=1;c['tool_explicit_errors_'+name]+=explicit_tool_error(out,name)
      if starts.get(x.get('span_id'))=='visit':times['visit'].append(x.get('seconds'))
     elif kind in ('summary','memory_api','automatic_memory'):
      c[kind+'_calls']+=1

@@ -17,6 +17,10 @@ def parse_verdict(raw):
  m=re.search(r'(?im)^\s*correct:\s*(yes|no)\b',raw)
  return None if not m else m.group(1).lower()=='yes'
 
+def contradictory_judgment(raw):
+ extracted=re.search(r'(?im)^\s*extracted_final_answer:\s*(.*)$',raw)
+ return parse_verdict(raw) is True and extracted is not None and extracted.group(1).strip().strip('"\'').casefold()=='none'
+
 def visible_judge_response(result):
  messages=result.get('messages',[])
  raw=str(messages[-1].get('content','') or '') if messages else str(result.get('prediction','') or '')
@@ -33,11 +37,16 @@ def judge(case,port,ref,result_path,receipt_tag='local-judge',prior_raw=None):
    r=client.chat.completions.create(model='QWEN35-BASE',messages=[{'role':'user','content':prompt}],temperature=0,max_tokens=1200,extra_body={'chat_template_kwargs':{'enable_thinking':False}})
    raw=r.choices[0].message.content or ''
   else:raw=prior_raw
-  verdict=parse_verdict(raw);retry_raw=None
-  if verdict is None and raw.strip():
+  initial_raw=None
+  if contradictory_judgment(raw):
+   initial_raw=raw
+   correction=client.chat.completions.create(model='QWEN35-BASE',messages=[{'role':'user','content':prompt},{'role':'assistant','content':raw},{'role':'user','content':'Your judgment is inconsistent: extracted_final_answer is None, but correct is yes. Apply the original matching criteria. If no exact final answer can be extracted, it cannot match the reference answer. Return the complete consistent judgment in the original required fields. Do not solve the question.'}],temperature=0,max_tokens=1200,extra_body={'chat_template_kwargs':{'enable_thinking':False}})
+   raw=correction.choices[0].message.content or ''
+  verdict=None if contradictory_judgment(raw) else parse_verdict(raw);retry_raw=None
+  if verdict is None and raw.strip() and initial_raw is None:
    retry=client.chat.completions.create(model='QWEN35-BASE',messages=[{'role':'user','content':prompt},{'role':'assistant','content':raw},{'role':'user','content':'Complete your judgment with exactly one final line: correct: yes or correct: no. Apply the criteria above; do not solve the question.'}],temperature=0,max_tokens=64,extra_body={'chat_template_kwargs':{'enable_thinking':False}})
    retry_raw=retry.choices[0].message.content or '';verdict=parse_verdict(retry_raw)
-  out={'judge_model':'QWEN35-BASE','duration_s':time.time()-start,'raw':raw,'format_retry_raw':retry_raw,'status':'scored' if verdict is not None else 'unavailable','is_correct':verdict,'judgment':'BrowseComp 官方判分提示；本地 4B 裁判' if verdict is not None else '本地裁判输出无法解析'}
+  out={'judge_model':'QWEN35-BASE','duration_s':time.time()-start,'raw':raw,'initial_raw':initial_raw,'format_retry_raw':retry_raw,'status':'scored' if verdict is not None else 'unavailable','is_correct':verdict,'judgment':'BrowseComp 官方判分提示；本地 4B 裁判' if verdict is not None else '本地裁判输出无法解析或判词矛盾'}
  except Exception as exc:out={'judge_model':'QWEN35-BASE','duration_s':time.time()-start,'raw':locals().get('raw'),'status':'unavailable','is_correct':None,'judgment':'裁判调用失败: '+type(exc).__name__}
  out.update(response_filter='visible_final_only',graded_response=response,source_result_path=str(result_path),source_result_sha256=hashlib.sha256(Path(result_path).read_bytes()).hexdigest(),prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest())
  save(RUN/'checks'/f'{case}-{receipt_tag}.json',out);return out

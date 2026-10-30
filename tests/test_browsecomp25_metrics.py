@@ -18,6 +18,8 @@ def test_original_json_and_repair_are_counted_separately(tmp_path,monkeypatch):
 def test_batched_search_error_is_not_hidden_by_earlier_success():
  assert module.explicit_tool_error('first result\n\n[Search Error] HTTP 429','search')
  assert not module.explicit_tool_error('first result\n\n[Search Error] HTTP 429','visit')
+ assert module.explicit_tool_error('The useful information in URL:\nEvidence in page:\n[visit] Error: Network error: TLS connection failed','visit')
+ assert not module.explicit_tool_error('The useful information in URL:\nEvidence in page:\nvalid document text','visit')
 
 
 def test_array_repairs_do_not_count_as_raw_valid_json(tmp_path,monkeypatch):

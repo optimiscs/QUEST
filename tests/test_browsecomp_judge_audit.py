@@ -43,3 +43,9 @@ def test_recovered_receipt_is_still_screened_after_status_merge(tmp_path,monkeyp
  monkeypatch.setattr(module,'R',tmp_path)
  out=module.scan()
  assert out['checked']==1 and not out['cases']
+
+
+def test_judge_saying_yes_after_extracting_none_is_flagged_without_rewriting_score():
+ receipt={'raw':'extracted_final_answer: None\ncorrect: yes','is_correct':True}
+ flags=module.review_flags(receipt,'I could not determine the brand.','Dr Martens')
+ assert 'correct_without_extracted_answer' in flags and receipt['is_correct'] is True
