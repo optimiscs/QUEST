@@ -119,6 +119,12 @@ for i in range(cli.requested_cases):
   ends.setdefault(start['span_id'],{'epoch':observed_until,'seconds':max(0,observed_until-start['epoch'])})
   native={'question':start.get('input',{}).get('question',''),'prediction':'','messages':[],'num_rounds':sum(e.get('kind')=='policy_model' and sid in ends for sid,e in starts.items())}
  else: continue
+ if native.get('resumed_from_messages'):
+  task_starts=[event for event in starts.values() if event.get('kind')=='task']
+  if task_starts:
+   first_task=min(task_starts,key=lambda event:event['epoch'])
+   final_epoch=state.get('agent_ended_epoch') or max((event.get('epoch',0) for event in events),default=first_task['epoch'])
+   ends[first_task['span_id']]={'epoch':final_epoch,'seconds':max(0,final_epoch-first_task['epoch']),'derived_from_resume_wall_timestamps':True}
  pairs=[(v,ends[k]) for k,v in starts.items() if k in ends];pairs.sort(key=lambda x:x[0]['epoch'])
  task=next(((s,e) for s,e in pairs if s['kind']=='task'),None)
  if not task:continue
@@ -166,6 +172,7 @@ for i in range(cli.requested_cases):
  if not steps:continue
  prediction=txt(native.get('prediction','')); scored=state.get('judge_state')=='scored'; last=native.get('messages',[]); raw_final=txt(last[-1].get('content','')) if last else ''; display_answer=prediction if prediction.strip() else '运行中或无原生答案（未评分）';rounds=int(native.get('num_rounds',len(steps)) or 0);case_time={'model':round(timing['policy_model'],3),'search':round(timing['tool_search'],3),'read':round(timing['reader']+timing['summary'],3),'compute':round(timing['tool_PythonInterpreter'],3),'overhead':max(0,duration-timing['policy_model']-timing['tool']-timing['automatic_memory']),'total':duration,'reader':round(timing['reader'],3),'summary':round(timing['summary'],3),'memory':round(timing['automatic_memory'],3)}
  display_note='原始模型预测及评分状态；未评分不等于错误'
+ if native.get('resumed_from_messages'):display_note+='；续跑总耗时包含原运行、检查点压缩及续跑'
  if cli.benchmark.lower()=='browsecomp' and prediction.strip().lower() in ('answer not found.','no answer found.'):
   visible=raw_final.rsplit('</think>',1)[-1].split('<think>',1)[0]
   if '<tool_call>' not in visible:

@@ -2,6 +2,17 @@ import json, subprocess, sys, tempfile, unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];SCRIPT=ROOT/'web/build_gaia.py'
 class BuilderTests(unittest.TestCase):
+ def test_resumed_trace_keeps_original_time_origin_and_full_wall_duration(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d)/'run';(root/'logs').mkdir(parents=True);out=Path(d)/'view'
+   source=root/'native.jsonl';source.write_text(json.dumps({'question':'Q','prediction':'A','messages':[{'content':'<answer>A</answer>'}],'num_rounds':2,'resumed_from_messages':True})+'\n')
+   (root/'status.json').write_text(json.dumps({'cases':{'row0000':{'agent_state':'terminal','result_path':str(source),'judge_state':'scored','is_correct':True,'agent_started_epoch':100,'agent_ended_epoch':250}}}))
+   events=[{'event':'span_start','span_id':'old-task','kind':'task','epoch':100},{'event':'span_start','span_id':'old-policy','kind':'policy_model','epoch':101},{'event':'span_end','span_id':'old-policy','kind':'policy_model','epoch':103,'seconds':2,'output':'searching'}, {'event':'span_start','span_id':'new-task','kind':'task','epoch':200},{'event':'span_start','span_id':'new-policy','kind':'policy_model','epoch':201},{'event':'span_end','span_id':'new-policy','kind':'policy_model','epoch':203,'seconds':2,'output':'<answer>A</answer>'},{'event':'span_end','span_id':'new-task','kind':'task','epoch':250,'seconds':50}]
+   (root/'logs/row0000-agent-events.jsonl').write_text('\n'.join(json.dumps(event) for event in events)+'\n')
+   result=subprocess.run([sys.executable,str(SCRIPT),'--run-root',str(root),'--output-dir',str(out),'--label','fake','--benchmark','BrowseComp','--requested-cases','1'],text=True,capture_output=True)
+   self.assertEqual(result.returncode,0,result.stderr);case=json.loads((out/'traces.json').read_text())['cases'][0]
+   self.assertEqual(case['durationSeconds'],150);self.assertEqual(case['steps'][0]['modelStart'],1);self.assertEqual(case['steps'][1]['modelStart'],101)
+
  def test_browsecomp_visible_regrade_replaces_legacy_score_without_rewriting_it(self):
   import hashlib
   with tempfile.TemporaryDirectory() as d:
