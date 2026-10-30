@@ -41,3 +41,19 @@ def test_no_match_fallback_remains_within_budget():
     assert audit['reason'] == 'no_retrieval_matches_prefix_fallback'
     assert count_tokens(result) <= 8000
     assert all(piece in text for piece in result.split('\n\n'))
+
+
+def test_configured_retrieval_top_k_limits_returned_chunks(monkeypatch):
+    monkeypatch.setenv('VISIT_RETRIEVAL_TOP_K', '2')
+    monkeypatch.delenv('VISIT_BM25_POOL_URL', raising=False)
+    text = ' '.join(f'whale observation {i} ocean evidence' for i in range(4000))
+    _, audit = select(text, 'whale ocean', 'bm25')
+    assert 1 <= len(audit['selected_indices']) <= 2
+
+
+def test_invalid_retrieval_limits_are_rejected(monkeypatch):
+    import pytest
+    monkeypatch.delenv('VISIT_BM25_POOL_URL', raising=False)
+    monkeypatch.setenv('VISIT_RETRIEVAL_TOP_K', '0')
+    with pytest.raises(ValueError, match='invalid retrieval limits'):
+        select('red fox ocean evidence ' * 5000, 'fox', 'bm25')

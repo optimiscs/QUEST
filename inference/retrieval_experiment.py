@@ -181,14 +181,18 @@ def select(text, goal, method, *, embedding_url=None, reranker_url=None):
         ranking = reciprocal_rank_fusion([lexical[:32], dense[:32]])
     else:
         ranking = lexical
+    candidate_limit = int(os.getenv('VISIT_RERANK_CANDIDATES', '32'))
+    output_limit = int(os.getenv('VISIT_RETRIEVAL_TOP_K', '8'))
+    if not 1 <= candidate_limit <= 512 or not 1 <= output_limit <= 512:
+        raise ValueError('invalid retrieval limits')
     if method in {'bm25_reranker', 'hybrid_reranker'} and ranking:
-        ranking = [i for i, _ in score(reranker_url, ranking[:32], 'reranker')]
+        ranking = [i for i, _ in score(reranker_url, ranking[:candidate_limit], 'reranker')]
     if not ranking:
-        selected, chosen = pack(chunks, list(range(len(chunks))))
+        selected, chosen = pack(chunks, list(range(len(chunks))), top_k=output_limit)
         if not selected:
             raise ValueError('no evidence block fits within the 8000 token budget')
         return selected, {'reason': 'no_retrieval_matches_prefix_fallback', 'input_tokens': original_tokens, 'output_tokens': count_tokens(selected), 'selected_indices': chosen}
-    selected, chosen = pack(chunks, ranking)
+    selected, chosen = pack(chunks, ranking, top_k=output_limit)
     if not selected:
         raise ValueError('no ranked evidence block fits within the 8000 token budget')
-    return selected, {'reason': 'selected', 'input_tokens': original_tokens, 'output_tokens': count_tokens(selected), 'chunks': len(chunks), 'selected_indices': chosen, 'ranked_indices': ranking[:32], 'stage_seconds': durations, 'total_seconds': time.monotonic() - started}
+    return selected, {'reason': 'selected', 'input_tokens': original_tokens, 'output_tokens': count_tokens(selected), 'chunks': len(chunks), 'selected_indices': chosen, 'ranked_indices': ranking[:candidate_limit], 'stage_seconds': durations, 'total_seconds': time.monotonic() - started}

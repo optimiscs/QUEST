@@ -1063,6 +1063,11 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                                  'parallel_tool_calls': False}
                                 if native_tools.enabled() else
                                 {'stop': ["\n<tool_response>", "<tool_response>"]})
+                reasoning_effort = os.getenv('QUEST_REASONING_EFFORT', '').strip()
+                if reasoning_effort and not structured_final:
+                    if reasoning_effort not in ('low', 'medium', 'high', 'xhigh'):
+                        raise ValueError('Unsupported QUEST_REASONING_EFFORT')
+                    tool_options['extra_body'] = {'reasoning_effort': reasoning_effort}
                 if structured_final:
                     tool_options['response_format'] = {'type': 'json_schema', 'json_schema': {
                         'name': 'final_answer', 'strict': True, 'schema': {

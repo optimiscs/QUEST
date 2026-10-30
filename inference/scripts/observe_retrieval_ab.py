@@ -24,6 +24,11 @@ if code.count(old) != 1:
 code = code.replace(old, " os.environ.pop('VISIT_LOCAL_PROMPT_ENABLED', None)\n os.environ.pop('MEMORY_LOCAL_PROMPT_ENABLED', None)\n if os.environ.get('QUEST_AB_MEMORY_BASE'):\n  os.environ['MEMORY_ENABLED']='true'\n  os.environ['MEMORY_MODEL_NAME']='openai/QWEN35-BASE'\n  os.environ['MEMORY_API_BASE']=os.environ['QUEST_AB_MEMORY_BASE']\n  os.environ['MEMORY_API_KEY']='EMPTY'\n  os.environ['MEMORY_DISABLE_THINKING']='true'")
 if os.environ.get('QUEST_AB_POLICY_BASE') == 'true':
     code = code.replace('QWEN35-SFT10', 'QWEN35-BASE')
+if os.environ.get('QUEST_AB_POLICY_MODEL'):
+    model = os.environ['QUEST_AB_POLICY_MODEL']
+    model_path = os.environ['QUEST_AB_POLICY_MODEL_PATH']
+    code = code.replace('QWEN35-SFT10', model).replace("PROJECT/'models/Qwen3.5-4B'", f"Path({model_path!r})")
+    code = code.replace('openai/QWEN35-BASE', 'openai/' + model)
 if os.environ.get('QUEST_AB_NO_GAIA') == 'true':
     if code.count(' plugin.install()') != 1:
         raise RuntimeError('upstream GAIA plugin wiring changed')
