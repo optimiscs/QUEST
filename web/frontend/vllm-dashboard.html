@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="vLLM 推理服务实时指标：吞吐、队列、缓存与延迟。">
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#ffffff">
+  <title>vLLM 推理服务监控 · Quest</title>
+</head>
+<body>
+  <div class="dashboard">
+    <header class="topbar"><a class="brand" href="/trace-viewer-zh/"><span class="brand-icon">Q</span><strong>QUEST</strong><span class="brand-divider"></span><span class="brand-sub">INFERENCE OBSERVATORY</span></a><div class="top-right" data-state="connecting"><span class="live-dot"></span><span id="connection">正在连接</span><a class="back-link" href="/trace-viewer-zh/">返回轨迹 <span>↗</span></a></div></header>
+    <main>
+      <section class="headline"><div><p class="eyebrow">SYSTEM MONITOR <span>/</span> LIVE</p><h1>推理服务<span>实时监控</span></h1><p>跨服务器监控吞吐、队列与缓存，每秒刷新。</p></div><div class="clock"><span>最近采样</span><strong id="timestamp">—</strong><small id="sample-detail">等待数据</small></div></section>
+      <section id="alert" class="alert" hidden></section>
+      <section class="summary" aria-label="集群概览">
+        <article class="metric"><p>在线服务 <span>ENDPOINTS</span></p><strong id="online">—</strong><small>模型与重排端点</small></article>
+        <article class="metric"><p>输入吞吐 <span>INPUT / SEC</span></p><strong id="input">—</strong><small>tokens / s · 最近采样间隔</small></article>
+        <article class="metric"><p>输出吞吐 <span>OUTPUT / SEC</span></p><strong id="output">—</strong><small>tokens / s · 最近采样间隔</small></article>
+        <article class="metric"><p>执行 / 排队 <span>REQUESTS</span></p><strong id="requests">—</strong><small>运行中 / 等待中</small></article>
+      </section>
+      <section class="panel chart-panel"><div class="section-heading"><div><p class="eyebrow">THROUGHPUT</p><h2>集群吞吐趋势</h2></div><div class="legend"><span><i class="input"></i>输入</span><span><i class="output"></i>输出</span><span>最近 60 秒</span></div></div><div class="chart"><div class="chart-grid"><span></span><span></span><span></span><span></span></div><svg id="chart" viewBox="0 0 1000 160" preserveAspectRatio="none" aria-label="输入及输出吞吐趋势"></svg><div id="chart-empty" class="chart-empty">正在收集采样数据</div></div><div class="chart-labels"><span>60 秒前</span><span>现在</span></div></section>
+      <section class="section-heading table-heading"><div><p class="eyebrow">REPLICA HEALTH</p><h2>模型实例 <span id="endpoint-count"></span></h2></div><p class="help">延迟为近 60 秒 P95；无样本显示 —</p></section>
+      <div id="servers" class="servers"></div>
+      <section class="panel notes"><div><p class="eyebrow">READING THE DATA</p><h2>指标口径</h2></div><div class="note-grid"><p><strong>吞吐与命中</strong>由相邻采样累计计数差计算；vLLM 上报间隔大于 1 秒时速率会跳变。</p><p><strong>延迟 P95</strong>按近 60 秒直方图桶增量估算；无样本或服务重启后显示 —。</p><p><strong>抢占与 MTP</strong>抢占为近 60 秒新增次数；MTP 为接受 token / 草稿 token。</p><p><strong>离线与重置</strong>离线端点不计入汇总；指标重置后重新积累，不将缺失值视为 0。</p></div></section>
+    </main><footer>QUEST <span>·</span> INFERENCE OBSERVATORY <span>·</span> vLLM PROMETHEUS METRICS</footer>
+  </div>
+  <script type="module" src="/src/vllm-dashboard.js"></script>
+</body>
+</html>

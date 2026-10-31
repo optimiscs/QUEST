@@ -2,6 +2,19 @@ import json, subprocess, sys, tempfile, unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];SCRIPT=ROOT/'web/build_gaia.py'
 class BuilderTests(unittest.TestCase):
+ def test_sparse_selected_case_and_recovered_killed_task_are_visible(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d)/'run';(root/'logs').mkdir(parents=True);(root/'checks').mkdir();out=Path(d)/'view'
+   result=root/'recovered.jsonl';result.write_text(json.dumps({'question':'Q','prediction':'A','messages':[{'content':'Exact Answer: A'}],'num_rounds':1})+'\n')
+   (root/'status.json').write_text(json.dumps({'cases':{'row0200':{'agent_state':'terminal','judge_state':'unavailable'}}}))
+   (root/'checks/row0200-recognized-answer-recovery.json').write_text(json.dumps({'status':'scored','is_correct':True,'recovery_result_path':str(result)}))
+   events=[{'event':'span_start','span_id':'task','kind':'task','epoch':100,'input':{'question':'Q'}},{'event':'span_start','span_id':'policy','kind':'policy_model','epoch':101},{'event':'span_end','span_id':'policy','kind':'policy_model','epoch':103,'seconds':2,'output':'Exact Answer: A'}]
+   (root/'logs/row0200-agent-events.jsonl').write_text('\n'.join(json.dumps(x) for x in events)+'\n')
+   p=subprocess.run([sys.executable,str(SCRIPT),'--run-root',str(root),'--output-dir',str(out),'--label','test','--benchmark','BrowseComp','--requested-cases','1'],capture_output=True,text=True)
+   self.assertEqual(p.returncode,0,p.stderr)
+   case=json.loads((out/'traces.json').read_text())['cases'][0]
+   self.assertEqual(case['id'],'trace-201');self.assertEqual(case['answer'],'A');self.assertTrue(case['correct']);self.assertEqual(case['durationSeconds'],3)
+
  def test_resumed_trace_keeps_original_time_origin_and_full_wall_duration(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d)/'run';(root/'logs').mkdir(parents=True);out=Path(d)/'view'

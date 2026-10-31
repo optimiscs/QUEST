@@ -67,6 +67,17 @@ def test_summary_detail_cache_export(env):
     assert second["nextCursor"] is None
     detail = client.get(base + "/traces/trace-245")
     assert detail.json() == package["cases"][0]
+    stats = client.get(base + "/traces/trace-245/session-stats")
+    assert stats.status_code == 200
+    assert stats.json()["sessionStats"] == {}
+    assert stats.json()["traceId"] == "trace-245"
+    assert (
+        client.get(
+            base + "/traces/trace-245/session-stats", headers={"If-None-Match": stats.headers["etag"]}
+        ).status_code
+        == 304
+    )
+    assert client.get(base + "/traces/missing/session-stats").status_code == 404
     assert (
         client.get(base + "/traces/trace-245", headers={"If-None-Match": detail.headers["etag"]}).status_code
         == 304
@@ -75,6 +86,15 @@ def test_summary_detail_cache_export(env):
     assert client.get(base + "/traces/missing").status_code == 404
     assert client.get(base + "/traces?limit=201").status_code == 422
     assert client.get("/datasets/arbitrary/traces.json").status_code == 404
+
+
+def test_interrupted_is_counted_as_stopped_not_error(env):
+    client, factory, run_id, path, package, metadata = env
+    package["cases"][1].update(inProgress=False, interrupted=True)
+    path.write_text(json.dumps(package))
+    assert import_run(factory, run_id, path, metadata, 0) is True
+    counts = client.get(f"/api/v1/runs/{run_id}").json()["counts"]
+    assert counts["stopped"] == 1 and counts["error"] == 0
 
 
 def test_import_idempotent_and_rollback(env):

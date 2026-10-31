@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 REPO=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(REPO));from inference.visible_judge_state import apply_visible_judgment
+from inference.session_stats import aggregate_policy_stats
 parser=argparse.ArgumentParser(description='Build a fresh viewer dataset from recorded GAIA spans; does not run inference or scoring.')
 parser.add_argument('--run-root',type=Path,required=True)
 parser.add_argument('--output-dir',type=Path,required=True)
@@ -49,6 +50,10 @@ if gt_path.exists():
  for row in json.loads(gt_path.read_text()):
   q=norm_gt(row.get('Question',''))
   if q:gt_rows[q]=row
+browse_refs_path=root/'judge/ground-truth/references.json'
+browse_refs={}
+if cli.benchmark.lower()=='browsecomp' and browse_refs_path.exists():
+ browse_refs={row['case']:row for row in json.loads(browse_refs_path.read_text()) if row.get('case')}
 def read_events(path):
  rows=[]
  if path.exists():
@@ -57,8 +62,9 @@ def read_events(path):
    except json.JSONDecodeError:pass
  return rows
 def txt(v):return v if isinstance(v,str) else json.dumps(v,ensure_ascii=False,default=str)
-for i in range(cli.requested_cases):
- case=f'row{i:04d}';state=dict(status['cases'].get(case,{}))
+case_ids=sorted(case for case in status['cases'] if re.fullmatch(r'row\d+',case))[:cli.requested_cases]
+for case in case_ids:
+ i=int(case[3:]);state=dict(status['cases'].get(case,{}))
  retry=retries.get((root.name,case))
  running_retry=running_retries.get((root.name,case))
  event_root=Path((retry or running_retry)['retry_root']) if retry or running_retry else root
@@ -71,6 +77,13 @@ for i in range(cli.requested_cases):
    recovered=json.loads(final_retry.read_text())
    if recovered.get('status')=='scored' and isinstance(recovered.get('is_correct'),bool) and Path(recovered.get('recovery_result_path','')).is_file():
     state.update(judge_state='scored',is_correct=recovered['is_correct'],result_path=recovered['recovery_result_path'],judgment='100 轮后无工具最终回答补全；本地 4B 裁判，原轨迹及原评分保留')
+  except (OSError,ValueError,TypeError):pass
+ recognized_retry=root/'checks'/f'{case}-recognized-answer-recovery.json'
+ if cli.benchmark.lower()=='browsecomp' and recognized_retry.exists():
+  try:
+   recovered=json.loads(recognized_retry.read_text())
+   if recovered.get('status')=='scored' and isinstance(recovered.get('is_correct'),bool) and Path(recovered.get('recovery_result_path','')).is_file():
+    state.update(agent_state='terminal',judge_state='scored',is_correct=recovered['is_correct'],result_path=recovered['recovery_result_path'],judgment='从已记录的完整模型回复恢复 Exact Answer；使用 BrowseComp 官方判分提示，本地 27B 裁判')
   except (OSError,ValueError,TypeError):pass
  local_judge_retry=root/'checks'/f'{case}-local-judge-retry.json'
  if state.get('judge_state')=='unavailable' and local_judge_retry.exists():
@@ -104,6 +117,12 @@ for i in range(cli.requested_cases):
  retrieval_audits=read_events(event_root/'logs'/f'{case}-retrieval.jsonl')
  used_retrieval_audits=set()
  starts={x['span_id']:x for x in events if x.get('event')=='span_start'};ends={x['span_id']:x for x in events if x.get('event')=='span_end'}
+ # A recovered result can come from an agent killed before its task span ended.
+ # Preserve the recorded event window; do not invent an actual completion time.
+ if recognized_retry.exists() and state.get('agent_state')=='terminal' and state.get('result_path'):
+  for task_start in (v for v in starts.values() if v.get('kind')=='task' and v['span_id'] not in ends):
+   last_epoch=max((e.get('epoch',0) for e in events if isinstance(e.get('epoch'),(int,float))),default=task_start['epoch'])
+   ends[task_start['span_id']]={'epoch':last_epoch,'seconds':max(0,last_epoch-task_start['epoch']),'derived_from_recorded_event_window':True}
  if state.get('agent_state')=='terminal' and state.get('result_path'):
   native=json.loads(result_path(state['result_path']).read_text().splitlines()[-1])
  elif state.get('agent_state') in ('running','interrupted') and cli.include_running:
@@ -181,18 +200,12 @@ for i in range(cli.requested_cases):
     display_answer=matches[-1].strip();display_note='从模型最终输出的 Exact Answer 提取用于展示；原生预测未识别，原始输出和评分不变'
  counts=collections.Counter(x['kind'] for x in steps);n=len(steps);querycount=sum(len(x['tool'].get('queries',[])) for x in steps if x['kind']=='search' and x['tool']);pages=sum(len(x['tool'].get('pages',[])) for x in steps if x['kind']=='read' and x['tool'])
  cases.append({'inProgress':state.get('agent_state')=='running','interrupted':state.get('agent_state')=='interrupted','id':f'trace-{i+1:02d}','index':i+1,'field':cli.benchmark,'fieldZh':cli.benchmark,'topic':case,'topicZh':case,'question':native.get('question',''),'answer':display_answer,'answerNote':('未完成轨迹的时长为已记录事件窗口，不含暂停时间' if state.get('agent_state')=='running' and cli.stopped_at is not None else display_note),'judge':str(state.get('judgment','')),'correct':(state.get('is_correct') is True) if scored else None,'score':state.get('score') if state.get('judge_state')=='scored_numeric' else None,'scoredDimensions':state.get('judge_state')=='scored_dimensions','rounds':rounds,'durationSeconds':duration,'durationText':f'{int(duration//60)}m {int(duration%60)}s','model':label,'risk':{'level':{'confirmed_answer_exposure':'alert','potential_benchmark_source_exposure':'warn','none_detected':'clean'}.get(audit_rows.get(case,{}).get('contamination_status'),'unknown'),'label':audit_rows.get(case,{}).get('contamination_status','not_audited')},'riskKey':audit_rows.get(case,{}).get('contamination_status','not_audited'),'stats':{'steps':n,'searchCalls':counts['search'],'readCalls':counts['read'],'computeCalls':counts['compute'],'searchQueries':querycount,'resultsScanned':sum(x['tool'].get('resultCount',0) for x in steps if x['kind']=='search' and x['tool']),'pagesRead':pages,'uniqueSources':len(sources),'uniqueDomains':len(domains),'maxPromptTokens':0,'maxOutputTokens':0,'averageStepSeconds':duration/n,'longestStepSeconds':max((x['model_seconds']+x['tool_seconds'] for x in steps),default=0)},'timing':case_time,'domains':[{'domain':k,'count':v} for k,v in domains.most_common()],'steps':steps,'finalAnswer':raw_final or prediction,'keyIndices':[],'sources':sorted(sources)})
- # Aggregate only complete policy-model usage; never interpret missing fields as zero.
- usage_rows=[e['api_response'].get('usage') if isinstance(e.get('api_response'),dict) else None for _,e in policies]
- valid_number=lambda x:isinstance(x,int) and not isinstance(x,bool) and x>=0
- if usage_rows and all(isinstance(u,dict) and valid_number(u.get('prompt_tokens')) and valid_number(u.get('completion_tokens')) for u in usage_rows):
-  prompt_tokens=sum(u['prompt_tokens'] for u in usage_rows); output_tokens=sum(u['completion_tokens'] for u in usage_rows)
-  usage={'inputTokens':prompt_tokens,'outputTokens':output_tokens,'totalTokens':prompt_tokens+output_tokens}
-  cached=[u.get('prompt_tokens_details',{}).get('cached_tokens') if isinstance(u.get('prompt_tokens_details'),dict) else None for u in usage_rows]
-  if all(valid_number(v) and v<=u['prompt_tokens'] for v,u in zip(cached,usage_rows)):
-   usage['cachedInputTokens']=sum(cached);usage['uncachedInputTokens']=prompt_tokens-sum(cached)
-  cases[-1]['sessionStats']={'usage':usage}
+ cases[-1]['sessionStats']=aggregate_policy_stats(policies)
  cases[-1].setdefault('sessionStats',{})['toolSeconds']=round(timing['tool'],3) if stats['tool'] else None
  _gt=gt_rows.get(norm_gt(native.get('question','')))
+ if cli.benchmark.lower()=='browsecomp':
+  ref=browse_refs.get(case, {})
+  _gt=ref if norm_gt(ref.get('prompt')) == norm_gt(native.get('question')) and norm_gt(ref.get('prompt')) else None
  if _gt:
   cases[-1]['groundTruth']=txt(_gt.get('answer',''))
   cases[-1]['groundTruthTaskId']=txt(_gt.get('task_id',''))

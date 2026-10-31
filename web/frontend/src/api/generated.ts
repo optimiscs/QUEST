@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/v1/vllm/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Vllm Metrics */
+        get: operations["vllm_metrics_api_v1_vllm_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health/live": {
         parameters: {
             query?: never;
@@ -115,6 +132,26 @@ export interface paths {
         };
         /** Trace Detail */
         get: operations["trace_detail_api_v1_runs__run_id__traces__trace_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/traces/{trace_id}/session-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Session Stats
+         * @description Return the latest imported measurements for one trajectory.
+         */
+        get: operations["session_stats_api_v1_runs__run_id__traces__trace_id__session_stats_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -276,6 +313,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    vllm_metrics_api_v1_vllm_metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     live_api_v1_health_live_get: {
         parameters: {
             query?: never;
@@ -440,6 +497,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TraceDocument"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    session_stats_api_v1_runs__run_id__traces__trace_id__session_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                trace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
