@@ -14,6 +14,7 @@ export function deriveSessionStats(trace) {
   const outputTokens = pick(usage.outputTokens);
   const inputTokens = pick(usage.inputTokens);
   const cached = pick(usage.cachedInputTokens);
+  const cacheInput = pick(usage.cacheMeasuredInputTokens) ?? inputTokens;
   const uncached = pick(usage.uncachedInputTokens) ?? (inputTokens !== null && cached !== null && cached <= inputTokens ? inputTokens - cached : null);
   const total = pick(usage.totalTokens) ?? (inputTokens !== null && outputTokens !== null ? inputTokens + outputTokens : null);
   const capacity = pick(context.capacityTokens);
@@ -23,13 +24,16 @@ export function deriveSessionStats(trace) {
     events: Array.isArray(trace?.steps) ? steps.reduce((sum, step) => sum + 1 + (step.tool ? 1 : 0), 0) : null,
     modelSeconds, toolSeconds,
     ttftSeconds: pick(stats.ttftSeconds),
+    ttftSamples: pick(stats.ttftSamples), completedCalls: pick(stats.completedCalls),
     // Total output over model-call wall time is an effective rate, not decode-only throughput.
     tps: pick(stats.outputTokensPerSecond) ?? (outputTokens !== null && modelSeconds > 0 ? outputTokens / modelSeconds : null),
     total, inputTokens, outputTokens, cached, uncached,
-    cacheRate: inputTokens > 0 && cached !== null && cached <= inputTokens ? cached / inputTokens : null,
+    cacheRate: cacheInput > 0 && cached !== null && cached <= cacheInput ? cached / cacheInput : null,
+    cacheSamples: pick(usage.cacheSamples), usageSamples: pick(usage.usageSamples),
     contextUsed: used, contextCapacity: capacity,
     contextRate: capacity > 0 && used !== null ? used / capacity : null,
     systemTokens: pick(context.systemTokens), toolTokens: pick(context.toolTokens), messageTokens: pick(context.messageTokens),
+    breakdownEstimated: context.breakdownEstimated === true,
   };
 }
 

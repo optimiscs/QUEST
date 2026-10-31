@@ -47,6 +47,11 @@ if __name__ == "__main__":
     parser.add_argument("--resume_terminations", type=str, default="No answer found after 1440min,temporal save")
     parser.add_argument("--resume_overwrite_existing", action="store_true")
     args = parser.parse_args()
+    if PYTHON_TOOL_ENABLED:
+        from tool_python import _get_sandbox_fusion_endpoints
+        from inference.sandbox_preflight import check_sandbox_endpoints
+        check_sandbox_endpoints(_get_sandbox_fusion_endpoints())
+        print('Python sandbox preflight passed', flush=True)
 
     model = args.model
     model_path = args.model_path

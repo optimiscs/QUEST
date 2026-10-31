@@ -138,7 +138,9 @@ def import_run(factory, run_id: str, path: Path, metadata: dict, position: int, 
                     )
                 counts["total"] += 1
                 status = (
-                    ("stopped" if stopped else "running")
+                    "stopped"
+                    if case.get("interrupted")
+                    else ("stopped" if stopped else "running")
                     if case.get("inProgress")
                     else (
                         "pass"

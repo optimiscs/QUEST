@@ -83,6 +83,8 @@ def test_native_prompt_ignores_legacy_profile_and_disabled_tools(monkeypatch):
 
 def agent_with_api(monkeypatch, tmp_path, responses, max_rounds=7):
     monkeypatch.setenv('QUEST_NATIVE_TOOL_CALLS', 'true')
+    # These fixtures return complete responses, not streaming chunks.
+    monkeypatch.setenv('QUEST_TELEMETRY_STREAM', '0')
     monkeypatch.delenv('QUEST_DEEPSEEK_TEACHER', raising=False)
     monkeypatch.setenv('MEMORY_ENABLED', 'false')
     monkeypatch.setenv('TASK_LOG_DIR', str(tmp_path))
@@ -131,6 +133,159 @@ def test_finalizer_disables_native_tools(monkeypatch, tmp_path):
     result = agent._run({'item': {'question': 'test', 'answer': 'done'}}, 'test-model')
     assert result['prediction'] == 'done'
     assert [r['tool_choice'] for r in requests] == ['auto', 'none']
+
+
+def test_browsecomp_exact_answer_finishes_without_regeneration(monkeypatch, tmp_path):
+    monkeypatch.setenv('QUEST_FINAL_ANSWER_PROFILE', 'browsecomp')
+    monkeypatch.setenv('QUEST_TELEMETRY_STREAM', '0')
+    original = 'Explanation: Evidence.\nExact Answer: Clare Wigfall\nConfidence: 90%'
+    agent, requests = agent_with_api(monkeypatch, tmp_path, [reply(content=original, finish='stop')])
+    result = agent._run({'item': {'question': 'test', 'answer': ''}}, 'test-model')
+    assert len(requests) == 1
+    assert result['prediction'] == 'Clare Wigfall'
+    assert result['termination'] == 'browsecomp_exact_answer'
+    assert result['messages'][-1]['content'] == original
+
+
+def test_browsecomp_tag_answer_finishes_without_regeneration(monkeypatch, tmp_path):
+    monkeypatch.setenv('QUEST_FINAL_ANSWER_PROFILE', 'browsecomp')
+    monkeypatch.setenv('QUEST_TELEMETRY_STREAM', '0')
+    original = 'Explanation: Evidence.\n<answer>Clare Wigfall</answer>'
+    agent, requests = agent_with_api(monkeypatch, tmp_path, [reply(content=original, finish='stop')])
+    result = agent._run({'item': {'question': 'test', 'answer': ''}}, 'test-model')
+    assert len(requests) == 1
+    assert result['prediction'] == 'Clare Wigfall'
+    assert result['termination'] == 'browsecomp_answer_tag'
+    assert result['messages'][-1]['content'] == original
+
+
+@pytest.mark.parametrize('native,text', [
+    (True, 'Explanation: Evidence.\nExact Answer: Clare Wigfall'),
+    (True, 'Explanation: Evidence.\n<answer>Clare Wigfall</answer>'),
+    (False, 'Explanation: Evidence.\nExact Answer: Clare Wigfall'),
+    (False, 'Explanation: Evidence.\n<answer>Clare Wigfall</answer>'),
+])
+def test_browsecomp_final_answer_precedes_memory_at_threshold(monkeypatch, tmp_path, native, text):
+    monkeypatch.setenv('QUEST_FINAL_ANSWER_PROFILE', 'browsecomp')
+    monkeypatch.setenv('QUEST_TELEMETRY_STREAM', '0')
+    agent, requests = agent_with_api(monkeypatch, tmp_path, [reply(content=text, finish='stop')])
+    monkeypatch.setenv('QUEST_NATIVE_TOOL_CALLS', 'true' if native else 'false')
+    agent.memory_enabled = True
+    agent.base_memory_context_threshold = 1
+    monkeypatch.setattr(agent, '_call_condenser_directly', lambda *a, **k: pytest.fail('unexpected memory compression'))
+    monkeypatch.setattr(agent, '_save_trajectory_for_distillation', lambda *a, **k: None)
+    result = agent._run({'item': {'question': 'test', 'answer': ''}}, 'test-model')
+    assert len(requests) == 1
+    assert result['prediction'] == 'Clare Wigfall'
+    assert result['messages'][-1]['content'] == text
+
+
+def test_memory_events_strip_only_matching_embedded_state(monkeypatch, tmp_path):
+    agent, _ = agent_with_api(monkeypatch, tmp_path, [])
+    agent._init_thread_state()
+    state = {'facts': ['a']}
+    agent._get_thread_state().memory_state = state
+    marker = '====================\nRESEARCH STATE SUMMARY (prev_state)\n===================='
+    messages = [{'role': 'system', 'content': 'system'},
+                {'role': 'user', 'content': 'Question\n\n' + marker + '\n' + json.dumps(state, indent=2)},
+                {'role': 'assistant', 'content': 'searching'},
+                {'role': 'tool', 'content': 'evidence', 'tool_call_id': 't'},
+                {'role': 'user', 'content': marker + '\nother user data'},
+                {'role': 'assistant', 'content': 'recent 1'},
+                {'role': 'assistant', 'content': 'recent 2'},
+                {'role': 'assistant', 'content': 'recent 3'}]
+    snapshot = copy.deepcopy(messages)
+    captured = {}
+    class FakeMemory:
+        def call(self, params):
+            captured.update(copy.deepcopy(params))
+            return json.dumps({'facts': ['updated']})
+    monkeypatch.setitem(react_agent.TOOL_MAP, 'condenser', FakeMemory())
+    monkeypatch.setattr(agent, '_update_first_user_message_with_state', lambda *args, **kwargs: None)
+    agent._call_condenser_directly(messages)
+    assert captured['prev_state'] == state
+    assert captured['events'][0]['content'] == 'Question'
+    assert captured['events'][-1]['content'] == messages[4]['content']
+    assert captured['events'][2]['tool_call_id'] == 't'
+    assert messages == snapshot
+    assert react_agent.memory_events_without_embedded_state(messages, None)[0]['content'] == snapshot[1]['content']
+    assert react_agent.memory_events_without_embedded_state(messages, {'facts': ['different']})[0]['content'] == snapshot[1]['content']
+
+
+@pytest.mark.parametrize('native', [True, False])
+def test_memory_summarizes_old_turns_and_keeps_three_complete_recent_turns(monkeypatch, tmp_path, native):
+    agent, _ = agent_with_api(monkeypatch, tmp_path, [])
+    agent._init_thread_state()
+    monkeypatch.setattr(agent, '_save_memory_log', lambda *a, **kw: None)
+    monkeypatch.setattr(agent, '_save_trajectory_for_distillation', lambda *a, **kw: None)
+    messages = [{'role': 'system', 'content': 'system'}, {'role': 'user', 'content': 'Question'}]
+    for i in range(5):
+        if native:
+            messages.extend([{'role': 'assistant', 'content': '', 'tool_calls': [
+                {'id': str(i), 'type': 'function', 'function': {'name': 'search', 'arguments': '{}'}}]},
+                {'role': 'tool', 'tool_call_id': str(i), 'content': f'result {i}'}])
+        else:
+            messages.extend([{'role': 'assistant', 'content': f'<tool_call>{i}</tool_call>'},
+                             {'role': 'user', 'content': f'<tool_response>result {i}</tool_response>'}])
+    original = copy.deepcopy(messages)
+    captured = {}
+    class FakeMemory:
+        def call(self, params):
+            captured.update(copy.deepcopy(params))
+            return '{"facts":["old evidence"]}'
+    monkeypatch.setitem(react_agent.TOOL_MAP, 'condenser', FakeMemory())
+    assert agent._call_condenser_directly(messages) == {'facts': ['old evidence']}
+    assert captured['events'] == original[1:6]  # question plus first two turns
+    assert messages[2:] == original[6:]  # three complete recent turns
+    assert messages[1]['content'].startswith('Question\n')
+    assert 'old evidence' in messages[1]['content']
+
+
+def test_memory_skips_when_no_older_turns(monkeypatch, tmp_path):
+    agent, _ = agent_with_api(monkeypatch, tmp_path, [])
+    agent._init_thread_state()
+    messages = [{'role': 'user', 'content': 'q'}] + [{'role': 'assistant', 'content': str(i)} for i in range(3)]
+    monkeypatch.setitem(react_agent.TOOL_MAP, 'condenser', SimpleNamespace(call=lambda *_: pytest.fail('unexpected summary')))
+    original = copy.deepcopy(messages)
+    assert agent._call_condenser_directly(messages) is None
+    assert messages == original
+
+
+def test_failed_memory_keeps_original_history_and_state(monkeypatch, tmp_path):
+    agent, _ = agent_with_api(monkeypatch, tmp_path, [])
+    agent._init_thread_state()
+    agent._get_thread_state().memory_state = {'facts': ['original']}
+    messages = [{'role': 'user', 'content': 'q'}] + [{'role': 'assistant', 'content': str(i)} for i in range(4)]
+    original = copy.deepcopy(messages)
+    monkeypatch.setitem(react_agent.TOOL_MAP, 'condenser', SimpleNamespace(call=lambda *_: 'invalid json'))
+    assert agent._call_condenser_directly(messages) is None
+    assert messages == original
+    assert agent._get_thread_state().memory_state == {'facts': ['original']}
+
+
+def test_tool_result_has_no_archive_marker_or_read_evidence(monkeypatch, tmp_path):
+    agent, _ = agent_with_api(monkeypatch, tmp_path, [])
+    agent._init_thread_state()
+    agent._get_thread_state().task_log_dir = str(tmp_path)
+    original = "A Google search for 'q' found 1 results:\n\nTitle: A\nLink: https://a\nSnipptes: fact"
+    monkeypatch.setitem(react_agent.TOOL_MAP, 'search', SimpleNamespace(call=lambda *a, **k: original))
+    assert agent.custom_call_tool('search', {'query': ['q']}) == original
+    assert 'read_evidence' not in react_agent.TOOL_MAP
+    assert not (tmp_path / 'evidence').exists()
+
+
+def test_optional_vector_search_never_exposes_evidence_ids(monkeypatch, tmp_path):
+    agent, _ = agent_with_api(monkeypatch, tmp_path, [])
+    agent._init_thread_state()
+    agent._get_thread_state().task_log_dir = str(tmp_path)
+    monkeypatch.setenv('QUEST_SEARCH_VECTOR_URL', 'http://vector')
+    monkeypatch.setitem(react_agent.TOOL_MAP, 'search', SimpleNamespace(call=lambda *a, **k: 'external'))
+    monkeypatch.setattr(react_agent.search_vector_client, 'search', lambda *a, **k: [{'title': 'source', 'url': 'https://a', 'snippet': 'fact', 'evidence_id': 'E' + 'a' * 64}])
+    monkeypatch.setattr(react_agent.search_vector_client, 'index', lambda *a, **k: 1)
+    result = agent.custom_call_tool('search', {'query': ['q']})
+    assert 'external' in result and 'fact' in result
+    assert 'Evidence' not in result and 'E' + 'a' * 64 not in result
+    assert not (tmp_path / 'evidence').exists()
 
 
 def test_native_mode_does_not_execute_prose_calls(monkeypatch, tmp_path):

@@ -428,10 +428,10 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
     $("#sessionTimingSummary").textContent = `${s.rounds === null ? "轮次未记录" : `${num(s.rounds)} 轮`} · ${s.events === null ? "步数未记录" : `${num(s.events)} 步`} · ${rate}`;
     $("#sessionTokensSummary").textContent = `${compactTokens(s.total)}${s.total === null ? "" : " tok"} · 缓存命中 ${percent(s.cacheRate)}`;
     $("#sessionContextSummary").textContent = `上下文 ${percent(s.contextRate)}`;
-    $("#sessionTimingCard").innerHTML = `<h3>◴　会话统计</h3>${rows([["模型用时", duration(s.modelSeconds)], ["工具调用用时", duration(s.toolSeconds)], ["首 token 平均（TTFT）", duration(s.ttftSeconds)], ["输出速度（TPS）", rate]])}<p class="session-card-note">速度按模型调用总耗时计算；工具耗时为已记录调用。</p>`;
-    $("#sessionTokensCard").innerHTML = `<h3>▤　Token 用量 <strong>${s.total === null ? "未记录" : `${num(s.total)} tok`}</strong></h3>${rows([["缓存命中", percent(s.cacheRate)], ["未缓存输入", num(s.uncached)], ["缓存读取", num(s.cached)], ["输出", num(s.outputTokens)]])}`;
+    $("#sessionTimingCard").innerHTML = `<h3>◴　会话统计</h3>${rows([["模型用时", duration(s.modelSeconds)], ["工具调用用时", duration(s.toolSeconds)], ["首 token 平均（TTFT）", duration(s.ttftSeconds)], ["输出速度（TPS）", rate]])}<p class="session-card-note">速度按模型调用总耗时计算；TTFT 样本 ${num(s.ttftSamples)} / 已完成调用 ${num(s.completedCalls)}。</p>`;
+    $("#sessionTokensCard").innerHTML = `<h3>▤　Token 用量 <strong>${s.total === null ? "未记录" : `${num(s.total)} tok`}</strong></h3>${rows([["缓存命中", percent(s.cacheRate)], ["未缓存输入", num(s.uncached)], ["缓存读取", num(s.cached)], ["输出", num(s.outputTokens)]])}${s.cacheSamples !== null && s.usageSamples !== null && s.cacheSamples < s.usageSamples ? `<p class="session-card-note">缓存数据仅覆盖 ${num(s.cacheSamples)} / ${num(s.usageSamples)} 次调用，命中率和输入分项仅按已记录部分计算。</p>` : ''}`;
     const progress = s.contextRate === null ? 0 : Math.min(100, s.contextRate * 100);
-    $("#sessionContextCard").innerHTML = `<h3>上下文已用 ${percent(s.contextRate)} <strong>${s.contextUsed === null || s.contextCapacity === null ? "未记录" : `${compactTokens(s.contextUsed)} / ${compactTokens(s.contextCapacity)}`}</strong></h3><div class="session-progress" role="progressbar" aria-label="上下文使用量" ${s.contextRate === null ? "" : `aria-valuenow="${Math.round(progress)}" aria-valuemin="0" aria-valuemax="100"`}><i style="width:${progress}%"></i></div>${rows([["系统提示词", num(s.systemTokens)], ["工具定义", num(s.toolTokens)], ["对话消息", num(s.messageTokens)]])}`;
+    $("#sessionContextCard").innerHTML = `<h3>上下文已用 ${percent(s.contextRate)} <strong>${s.contextUsed === null ? "未记录" : `${compactTokens(s.contextUsed)} / ${s.contextCapacity === null ? "容量未记录" : compactTokens(s.contextCapacity)}`}</strong></h3><div class="session-progress" role="progressbar" aria-label="上下文使用量" ${s.contextRate === null ? "" : `aria-valuenow="${Math.round(progress)}" aria-valuemin="0" aria-valuemax="100"`}><i style="width:${progress}%"></i></div>${rows([["系统提示词", num(s.systemTokens)], ["工具定义", num(s.toolTokens)], ["对话消息", num(s.messageTokens)]])}${s.breakdownEstimated ? '<p class="session-card-note">分类按文本估算，不含模板开销；上下文总量以最近一次请求的服务端计数为准。</p>' : ''}`;
   }
 
   /* ---------- dock and summary ---------- */
@@ -533,6 +533,7 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
     const status = caseState(c);
     const judge = c.judge && !["true", "false"].includes(String(c.judge)) ? String(c.judge) : "";
     const level = c.groundTruthLevel ? `Level ${c.groundTruthLevel}` : "";
+    const benchmark = c.fieldZh || c.field || state.data.run.benchmark || "基准";
     const standardAnswer = String(c.groundTruth).trim();
     const modelAnswer = String(c.answer || "").trim() || "尚未产生答案";
     openModal(
@@ -545,7 +546,7 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
         </div>
         <div class="gt-pair">
           <section class="gt-card is-standard">
-            <div class="gt-caption"><span>标准答案</span><small>GAIA official</small></div>
+            <div class="gt-caption"><span>标准答案</span><small>${escapeHTML(benchmark)}</small></div>
             <pre class="gt-value">${escapeHTML(standardAnswer)}</pre>
           </section>
           <section class="gt-card">
@@ -557,7 +558,7 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
           <span class="gt-state is-${status.key}"><i></i>${status.label}</span>
           <span class="gt-judge">${escapeHTML(judge || "未记录评分方式")}</span>
         </div>
-        <p class="info-note">标准答案来自 GAIA 官方标注${level ? `（${escapeHTML(level)}）` : ""}。这里用于人工核对；答案的字面差异不一定等同于语义错误，最终以 judge 规则为准。</p>
+        <p class="info-note">标准答案来自 ${escapeHTML(benchmark)} 参考标注${level ? `（${escapeHTML(level)}）` : ""}。这里用于人工核对；答案的字面差异不一定等同于语义错误，最终以 judge 规则为准。</p>
       </div>`
     );
   }
@@ -972,6 +973,13 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
     pollInFlight = true;
     const generation = navigationGeneration;
     try {
+      const selectedId = activeCase().id;
+      const stats = await getJSON(`${runURL(state.runId)}/traces/${encodeURIComponent(selectedId)}/session-stats`);
+      if (generation !== navigationGeneration) return;
+      if (stats.data && state.activeTrace?.id === selectedId) {
+        state.activeTrace.sessionStats = stats.data.sessionStats;
+        renderSessionStats(state.activeTrace);
+      }
       await refreshWorkspaceStats();
       const manifest = await loadWorkspaceManifest();
       if (JSON.stringify(manifest) !== JSON.stringify(state.manifest)) {

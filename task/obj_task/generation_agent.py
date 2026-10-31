@@ -355,7 +355,7 @@ class MultiTurnReactAgent(FnCallAgent):
             start = last_content.index("<answer>") + len("<answer>")
             end = last_content.index("</answer>", start)
             answer_json_str = last_content[start:end].strip()
-            parsed_answer = json.loads(answer_json_str)
+            parsed_answer = json.loads(answer_json_str, strict=False)
 
             question = parsed_answer.get("proposed_question", "") or self.user_prompt
             constraints = parsed_answer.get("constraints", [])
@@ -970,9 +970,6 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 if '<tool_call>' not in content and '</tool_call>' not in content:
                     termination = 'answer'
                     break
-            if num_llm_calls_available <= 0 and '<answer>' not in content:
-                messages[-1]['content'] = 'Sorry, the number of llm calls exceeds the limit.'
-
             if current_token_count > max_tokens:
                 print(f"Token quantity exceeds the limit: {current_token_count} > {max_tokens}")
                 
@@ -1030,7 +1027,26 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
 
 
-        messages = self._self_refine_if_needed(messages, planning_port)
+        if num_llm_calls_available <= 0 and not any(
+            m.get('role') == 'assistant' and '<answer>' in m.get('content', '')
+            and '</answer>' in m.get('content', '') for m in messages
+        ):
+            messages.append({'role': 'user', 'content': (
+                'The research turn limit has been reached. Do not call more tools. '
+                'Using the evidence already gathered, provide the complete required '
+                'question, solution and rubric tree as JSON inside <answer>...</answer>.'
+            )})
+            content, _, cost_info = self.call_server(messages, planning_port)
+            for key in total_cost_info:
+                total_cost_info[key] += cost_info.get(key, 0)
+            messages.append({'role': 'assistant', 'content': content.strip()})
+
+        answer_message = next((m for m in reversed(messages)
+                               if m.get('role') == 'assistant'
+                               and '<answer>' in m.get('content', '')
+                               and '</answer>' in m.get('content', '')), None)
+        original_count = len(messages)
+        messages = self._self_refine_if_needed(messages, planning_port) if answer_message else messages
 
         last_content = messages[-1]['content']
         if self.memory_enabled and self.task_log_dir:
@@ -1045,31 +1061,23 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             except Exception as e:
                 print(f"[Memory] Warning: Failed to save final trajectory: {e}")
 
-        if len(messages) >= 2 and '<answer>' in messages[-2]['content']:
+        if answer_message is not None:
             try:
-                answer_content = messages[-2]['content']
+                answer_content = answer_message['content']
                 start_idx = answer_content.find('<answer>')
                 end_idx = answer_content.find('</answer>', start_idx)
                 if start_idx != -1 and end_idx != -1:
                     answer_json_str = answer_content[start_idx + len('<answer>'):end_idx].strip()
-                    prediction_json = json.loads(answer_json_str)
+                    prediction_json = json.loads(answer_json_str, strict=False)
                 else:
                     prediction_json = json.loads(answer_content)
-                refined_content = messages[-1]['content'].strip()
-                try:
+                rubric_tree = prediction_json.get('rubric_tree')
+                if len(messages) > original_count:
+                    refined_content = messages[-1]['content'].strip()
                     refined_obj = json.loads(refined_content)
-                    if isinstance(refined_obj, dict) and 'rubric_tree' in refined_obj:
-                        rubric_tree = refined_obj['rubric_tree']
-                    else:
-                        rubric_tree = refined_obj
-                except json.JSONDecodeError:
-                    start = refined_content.find('{')
-                    end = refined_content.rfind('}')
-                    if start != -1 and end != -1:
-                        refined_obj = json.loads(refined_content[start:end+1])
-                        rubric_tree = refined_obj.get('rubric_tree', refined_obj)
-                    else:
-                        raise ValueError("Cannot parse refined rubric tree from messages[-1]")
+                    rubric_tree = refined_obj.get('rubric_tree', refined_obj)
+                if not isinstance(rubric_tree, dict) or not rubric_tree:
+                    raise ValueError('Missing rubric tree')
                 prediction_json['rubric_tree'] = rubric_tree
                 if start_idx != -1 and end_idx != -1:
                     updated_answer_json_str = json.dumps(prediction_json, ensure_ascii=False, indent=2)
@@ -1087,7 +1095,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 termination = 'answer'
             except (json.JSONDecodeError, KeyError, ValueError) as e:
                 print(f"[Error] Failed to extract prediction and rubric_tree: {e}")
-                answer_content = messages[-2]['content']
+                answer_content = answer_message['content']
                 prediction = {
                     "text": answer_content,
                     "json": {}

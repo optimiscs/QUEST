@@ -6,9 +6,16 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select, text
 
 from quest_viewer.api.schemas import Manifest, RunInfo, TaskPage, TraceDocument, WorkspaceStatus
+from quest_viewer.api.vllm_metrics import scrape_all
 from quest_viewer.db.models import Report, Run, Trace, TracePayload
 
 router = APIRouter(prefix="/api/v1")
+
+
+@router.get("/vllm/metrics")
+async def vllm_metrics(response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await scrape_all()
 
 
 def factory(request: Request):
@@ -105,6 +112,28 @@ def trace_detail(request: Request, run_id: str, trace_id: str, response: Respons
         )
         response.headers.update(cache_headers(trace.revision))
         return body
+
+
+@router.get("/runs/{run_id}/traces/{trace_id}/session-stats")
+def session_stats(request: Request, run_id: str, trace_id: str, response: Response):
+    """Return the latest imported measurements for one trajectory."""
+    with factory(request)() as session:
+        session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+        trace = session.get(Trace, (run_id, trace_id))
+        if trace is None:
+            raise HTTPException(404, "Trace not found")
+        if not_modified(request, trace.revision):
+            return Response(status_code=304, headers=cache_headers(trace.revision))
+        body = session.scalar(
+            select(TracePayload.body).where(TracePayload.run_id == run_id, TracePayload.trace_id == trace_id)
+        )
+        response.headers.update(cache_headers(trace.revision))
+        return {
+            "traceId": trace_id,
+            "revision": trace.revision,
+            "sessionStats": body.get("sessionStats", {}),
+            "timing": body.get("timing", {}),
+        }
 
 
 @router.get("/runs/{run_id}/export")

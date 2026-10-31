@@ -5,6 +5,22 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/api/v1/vllm/metrics": {
+      "get": {
+        "summary": "Vllm Metrics",
+        "operationId": "vllm_metrics_api_v1_vllm_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health/live": {
       "get": {
         "summary": "Live",
@@ -206,6 +222,53 @@
                 "schema": {
                   "$ref": "#/components/schemas/TraceDocument"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/traces/{trace_id}/session-stats": {
+      "get": {
+        "summary": "Session Stats",
+        "description": "Return the latest imported measurements for one trajectory.",
+        "operationId": "session_stats_api_v1_runs__run_id__traces__trace_id__session_stats_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },

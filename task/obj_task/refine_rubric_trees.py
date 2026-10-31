@@ -137,6 +137,32 @@ def get_formatted_tree(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return tree if isinstance(tree, dict) else None
 
 
+def tree_statistics(tree: Dict[str, Any]) -> Dict[str, Any]:
+    """Measure the actual refined tree, including single-root and list forms."""
+    roots = [tree] if 'name' in tree or 'node_name' in tree else list(tree.values())
+    total: Dict[int, int] = {}
+    max_depth = max_width = 0
+    for root in roots:
+        counts: Dict[int, int] = {}
+        def walk(node: Any, depth: int) -> None:
+            if not isinstance(node, dict):
+                raise ValueError('Rubric tree contains a non-object node')
+            counts[depth] = counts.get(depth, 0) + 1
+            children = node.get('children') or []
+            if isinstance(children, dict):
+                children = list(children.values())
+            if not isinstance(children, list):
+                raise ValueError('Rubric tree children must be a list or object')
+            for child in children:
+                walk(child, depth + 1)
+        walk(root, 1)
+        max_depth = max(max_depth, max(counts, default=0))
+        max_width = max(max_width, max(counts.values(), default=0))
+        for depth, count in counts.items():
+            total[depth] = total.get(depth, 0) + count
+    return {'max_depth': max_depth, 'max_width': max_width, 'width_by_level': total}
+
+
 async def refine_file(
     path: Path,
     output_dir: Path,
@@ -214,6 +240,7 @@ async def refine_file(
         )
         if accepted:
             output_data["rubric_tree_analysis_refined"]["formatted_tree"] = current_tree
+            output_data["rubric_tree_analysis_refined"].update(tree_statistics(current_tree))
             output_path = output_dir / path.name
             output_path.write_text(json.dumps(output_data, ensure_ascii=False, indent=2), encoding="utf-8")
 

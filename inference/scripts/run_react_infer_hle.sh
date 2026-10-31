@@ -81,7 +81,7 @@ echo "Loaded API config from ${API_CONFIG_FILE}"
 
 export MEMORY_THRESHOLD="${MEMORY_THRESHOLD:-40000}"
 export LLM_MAX_TOKENS="${LLM_MAX_TOKENS:-20000}"
-export SANDBOX_FUSION_ENDPOINT="${SANDBOX_FUSION_ENDPOINT:-your_sandbox_endpoint}"
+export SANDBOX_FUSION_ENDPOINT="${SANDBOX_FUSION_ENDPOINT:-http://127.0.0.1:8080}"
 
 # Multi-Worker Configuration (Optional)
 # These are typically set by distributed training frameworks

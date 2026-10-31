@@ -67,3 +67,9 @@ npm run test:e2e
 部署、备份与回退见 [operations.md](docs/operations.md)，数据与事务设计见 [architecture.md](docs/architecture.md)。
 
 当前轨迹底部状态栏展示轮次、已展示事件数、模型及工具调用耗时；点击可查看用量与上下文卡片。`sessionStats` 可选字段支持 `usage.inputTokens`、`usage.outputTokens`、`usage.totalTokens`、`usage.cachedInputTokens`、`usage.uncachedInputTokens`、`modelSeconds`、`toolSeconds`、`ttftSeconds`、`outputTokensPerSecond`，以及 `context.usedTokens`、`context.capacityTokens`、`context.systemTokens`、`context.toolTokens`、`context.messageTokens`。缺失字段显示“未记录”，不会按 0 估算。由 `build_gaia.py` 新生成的轨迹只在所有已完成策略模型调用均有用量记录时汇总其 token；不包括摘要、记忆或其他辅助模型。输出速度未单独记录时，按策略模型输出 token 总数除以模型调用总耗时计算，包含首 token 等待时间。已有轨迹需重新生成并导入后才会包含新汇总，原始记录缺失的数据仍不可用。
+
+## vLLM 指标发现
+
+`/vllm-dashboard.html` 每秒采样后端指标。后端每 20 秒检查本机运行中的 vLLM 服务进程，以及本机现存的 SSH 转发或 `user@host` 交互会话；对远端通过非交互 SSH 只读检查 vLLM 进程。优先使用已有的本地端口转发，其他远端端口通过 SSH 读取指标。SSH 密钥、目标和远端命令不由浏览器提供。自动发现要求后端用户有权限读取对应进程信息，远端可执行 Python 3，且已有连接所用认证可用于非交互 SSH；失败时页面显示发现告警。不会扫描网段或自动建立常驻隧道。
+
+`VIEWER_VLLM_ENDPOINTS` 仍可通过 JSON 数组补充本机回环地址端口；自动发现不会因设置该变量而停用。指标只在服务实际提供时显示，采样启动、端点重启后速率需重新累积。
