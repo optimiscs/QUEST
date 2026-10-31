@@ -179,6 +179,8 @@ class Search(BaseTool):
                 continue
     
         data = res.read()
+        if res.status != 200:
+            return f"[Search] Error: Serper returned HTTP {res.status}; search results are unavailable."
         results = json.loads(data.decode("utf-8"))
 
         try:
@@ -220,7 +222,7 @@ class Search(BaseTool):
                 print(f"[search] Cache hit for query: {query}")
                 return cached_result
         result = self.google_search_with_serp(query)
-        if self.cache and result and not result.startswith("No results found") and not result.startswith("Google search Timeout"):
+        if self.cache and result and not result.startswith(("No results found", "Google search Timeout", "[Search] Error")):
             self.cache.set(query, result)
         
         return result

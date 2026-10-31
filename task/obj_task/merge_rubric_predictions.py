@@ -101,6 +101,14 @@ def process_file(file_path: Path) -> bool:
             return False
         second_last_content = assistants[-2].get('content', '')
         last_content = assistants[-1].get('content', '')
+        # Self-refinement may be unavailable or fail. In that case the last
+        # assistant message itself is the generated answer, not a revision.
+        if extract_answer_from_prediction(last_content):
+            data['prediction'] = last_content
+            data['answer'] = extract_answer_from_prediction(last_content)
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
         
         if not second_last_content:
             print(f"Warning: second-last assistant content is empty in {file_path.name}, skipping")
@@ -113,6 +121,23 @@ def process_file(file_path: Path) -> bool:
                 new_rubric_tree_dict = last_json['rubric_tree']
         except (json.JSONDecodeError, TypeError):
             pass
+
+        # Prefer editing parsed answer JSON. Replacing a free-text rubric span
+        # can accidentally remove the closing answer tag and lose the task.
+        original_answer = extract_answer_from_prediction(second_last_content)
+        if original_answer:
+            try:
+                parsed_answer = json.loads(original_answer, strict=False)
+                if isinstance(parsed_answer, dict):
+                    if isinstance(new_rubric_tree_dict, dict):
+                        parsed_answer['rubric_tree'] = new_rubric_tree_dict
+                    data['prediction'] = second_last_content
+                    data['answer'] = json.dumps(parsed_answer, ensure_ascii=False, indent=2)
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    return True
+            except (json.JSONDecodeError, TypeError):
+                pass
         
         if new_rubric_tree is None:
             print(f"Warning: could not extract rubric tree from the last assistant message in {file_path.name}; using original content")
