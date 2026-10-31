@@ -31,7 +31,8 @@ def test_complete_usage_is_summed_without_inventing_cache_data(tmp_path):
     stats = build(tmp_path, [{'prompt_tokens': 100, 'completion_tokens': 10, 'prompt_tokens_details': {'cached_tokens': 60}},
                              {'prompt_tokens': 80, 'completion_tokens': 20, 'prompt_tokens_details': {'cached_tokens': 50}}])
     assert stats['usage'] == {'inputTokens': 180, 'outputTokens': 30, 'totalTokens': 210,
-                              'cachedInputTokens': 110, 'uncachedInputTokens': 70}
+                              'cachedInputTokens': 110, 'uncachedInputTokens': 70,
+                              'cacheMeasuredInputTokens': 180, 'cacheSamples': 2, 'usageSamples': 2}
     assert stats['toolSeconds'] is None
 
 
