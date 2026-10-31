@@ -11,11 +11,15 @@ import os
 import sys
 import re
 import hashlib
+import requests
 import threading
 from typing import Dict, Iterator, List, Literal, Optional, Tuple, Union
 from qwen_agent.llm.schema import Message
 from qwen_agent.utils.utils import build_text_completion_prompt
 from openai import OpenAI, APIError, APIConnectionError, APITimeoutError
+from inference.session_telemetry import measured_completion, context_capacity
+from inference.final_answer import recognize_benchmark_answer
+from inference import search_vector_client
 from transformers import AutoTokenizer
 from datetime import datetime, date
 from qwen_agent.agents.fncall_agent import FnCallAgent
@@ -39,6 +43,50 @@ from tool_scholar import *
 from tool_search import *
 from tool_visit import *
 from tool_memory import *
+
+class TextResponse(str):
+    """Text-mode response retaining the provider's completion status."""
+    def __new__(cls, text, finish_reason=None):
+        result = super().__new__(cls, text)
+        result.finish_reason = finish_reason
+        return result
+
+
+def memory_events_without_embedded_state(messages: List[Dict], prev_state) -> List[Dict]:
+    """Copy memory events and remove the redundant state from the first user message."""
+    events = [copy.deepcopy(msg) for msg in messages
+              if msg.get('role') in ('user', 'assistant', 'tool')]
+    if prev_state is None:
+        return events
+    for msg in events:
+        if msg.get('role') != 'user':
+            continue
+        content = msg.get('content')
+        if isinstance(content, str):
+            marker = '====================\nRESEARCH STATE SUMMARY (prev_state)\n===================='
+            position = content.rfind(marker)
+            state_json = json.dumps(prev_state, ensure_ascii=False, indent=2)
+            if position >= 0 and state_json in content[position + len(marker):]:
+                msg['content'] = content[:position].rstrip()
+        break
+    return events
+
+
+def split_memory_history(messages: List[Dict], keep_rounds: int = 3):
+    """Partition at an assistant turn boundary, retaining complete recent turns."""
+    first_user = next((i for i, msg in enumerate(messages) if msg.get('role') == 'user'), None)
+    if first_user is None or keep_rounds < 1:
+        return None
+    turns = [i for i in range(first_user + 1, len(messages)) if messages[i].get('role') == 'assistant']
+    if len(turns) <= keep_rounds:
+        return None
+    cutoff = turns[-keep_rounds]
+    # Keep unexpected system messages as part of the active prefix, rather than
+    # silently discarding them with the compacted conversation.
+    if any(msg.get('role') == 'system' for msg in messages[first_user + 1:cutoff]):
+        return None
+    return messages[:first_user + 1] + messages[first_user + 1:cutoff], messages[cutoff:]
+
 
 def extract_non_thinking_answer(content: str) -> Optional[str]:
     """Extract the final answer from output outside the model's thinking block."""
@@ -100,6 +148,8 @@ if SCHOLAR_TOOL_ENABLED:
 if PYTHON_TOOL_ENABLED:
     TOOL_CLASS.append(PythonInterpreter())
 TOOL_MAP = {tool.name: tool for tool in TOOL_CLASS}
+
+
 
 # Remove visit from TOOL_MAP when disabled to prevent execution even if a model emits it.
 if os.environ.get("DISABLE_VISIT_TOOL", "").lower() in ("1", "true", "yes"):
@@ -585,10 +635,11 @@ class MultiTurnReactAgent(FnCallAgent):
     def _update_first_user_message_with_state(self, messages: List[Dict], state: Dict, 
                                              original_messages: List[Dict] = None,
                                              trigger_reason: str = "unknown",
-                                             round_num: int = 0):
+                                             round_num: int = 0,
+                                             recent_messages: Optional[List[Dict]] = None):
         """
         Update the first user message by appending prev_state and the prompt at the end
-        and delete all later interaction messages (user and assistant), because this information has already been summarized into prev_state
+        and replace summarized older interactions while keeping recent turns.
         
         Args:
             messages: message list(will be modified)
@@ -623,11 +674,11 @@ class MultiTurnReactAgent(FnCallAgent):
         
         # Decide how many messages to keep based on the trigger type(before adding prev_state)
         # This lets us compute the token count after deletion first
-        # CONTEXT_THRESHOLD when triggered, delete all subsequent messages(keep only the system prompt and the first user message)
         messages_to_keep = first_user_idx + 1
-        removed_count = len(messages) - messages_to_keep
+        recent_messages = copy.deepcopy(recent_messages or [])
+        removed_count = len(messages) - messages_to_keep - len(recent_messages)
         if removed_count > 0:
-            messages[:] = messages[:messages_to_keep]
+            messages[:] = messages[:messages_to_keep] + recent_messages
             print(f"[Memory] {trigger_reason}: Removed {removed_count} subsequent messages (summarized in prev_state)")
         else:
             print(f"[Memory] {trigger_reason}: No messages to remove")
@@ -836,12 +887,13 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             # Save a copy of the original messages(used for logging)
             original_messages = copy.deepcopy(messages)
             
-            # Prepare events(extracting them from messages while excluding the system prompt)
-            events = []
-            for msg in messages:
-                role = msg.get("role", "")
-                if role in ["user", "assistant", "tool"]:
-                    events.append(copy.deepcopy(msg))
+            partition = split_memory_history(messages, keep_rounds=3)
+            if partition is None:
+                print('[Memory] No older complete turns to summarize; retaining current context')
+                tl.condenser_processing = False
+                return None
+            older_messages, recent_messages = partition
+            events = memory_events_without_embedded_state(older_messages, tl.memory_state)
             
             # Call the condenser tool
             condenser_tool = TOOL_MAP.get("condenser")
@@ -881,7 +933,8 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                     messages, new_state, 
                     original_messages=original_messages,
                     trigger_reason="CONTEXT_THRESHOLD",
-                    round_num=round_num
+                    round_num=round_num,
+                    recent_messages=recent_messages
                 )
                 # Reset the processing flag
                 tl.condenser_processing = False
@@ -1064,7 +1117,10 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                                 if native_tools.enabled() else
                                 {'stop': ["\n<tool_response>", "<tool_response>"]})
                 reasoning_effort = os.getenv('QUEST_REASONING_EFFORT', '').strip()
-                if reasoning_effort and not structured_final:
+                disable_thinking = os.getenv('QUEST_DISABLE_THINKING', '0') == '1'
+                if disable_thinking and not structured_final:
+                    tool_options['extra_body'] = {'chat_template_kwargs': {'enable_thinking': False}}
+                elif reasoning_effort and not structured_final:
                     if reasoning_effort not in ('low', 'medium', 'high', 'xhigh'):
                         raise ValueError('Unsupported QUEST_REASONING_EFFORT')
                     tool_options['extra_body'] = {'reasoning_effort': reasoning_effort}
@@ -1075,7 +1131,10 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                             'required': ['answer'], 'additionalProperties': False}}}
                     tool_options['extra_body'] = {'chat_template_kwargs': {'enable_thinking': False}}
                     max_tokens = int(os.getenv('QUEST_FINAL_MAX_TOKENS', '2048'))
-                chat_response = client.chat.completions.create(
+                request_started = time.monotonic()
+                ttft_seconds = None
+                completion_call = measured_completion if os.getenv('QUEST_TELEMETRY_STREAM', '1') == '1' else None
+                request_kwargs = dict(
                     model=tl.model,
                     messages=native_tools.prepare_messages(msgs) if native_tools.enabled() else msgs,
                     **tool_options,
@@ -1085,6 +1144,41 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                     max_tokens=max_tokens,
                     presence_penalty=self.llm_generate_cfg.get('presence_penalty', 1.1)
                 )
+                if completion_call:
+                    chat_response, ttft_seconds = completion_call(client, **request_kwargs)
+                else:
+                    chat_response = client.chat.completions.create(**request_kwargs)
+                context_measurement = {}
+                # Category sizes are tokenized content estimates, not billing counts;
+                # the provider's prompt_tokens remains the authoritative total.
+                if self._tokenizer is None and os.getenv('QUEST_TELEMETRY_TOKEN_BREAKDOWN', '1') == '1':
+                    try:
+                        self._tokenizer = AutoTokenizer.from_pretrained(self.llm_local_path, local_files_only=True)
+                    except Exception:
+                        pass
+                if self._tokenizer is not None:
+                    try:
+                        parts = {'systemTokens': 0, 'messageTokens': 0}
+                        for message in request_kwargs['messages']:
+                            category = 'systemTokens' if message.get('role') == 'system' else 'messageTokens'
+                            value = message.get('content') or ''
+                            if not isinstance(value, str):
+                                value = json.dumps(value, ensure_ascii=False)
+                            parts[category] += len(self._tokenizer.encode(value, add_special_tokens=False))
+                        if request_kwargs.get('tools'):
+                            parts['toolTokens'] = len(self._tokenizer.encode(json.dumps(request_kwargs['tools'], ensure_ascii=False), add_special_tokens=False))
+                        else:
+                            parts['toolTokens'] = 0
+                        context_measurement = parts
+                    except Exception:
+                        pass
+                capacity = os.getenv('QUEST_CONTEXT_CAPACITY_TOKENS', '')
+                if capacity.isdigit() and int(capacity) > 0:
+                    context_measurement['capacityTokens'] = int(capacity)
+                else:
+                    capacity = context_capacity(openai_api_base, tl.model)
+                    if capacity:
+                        context_measurement['capacityTokens'] = capacity
                 choice = chat_response.choices[0]
                 if native_tools.enabled():
                     content = native_tools.NativeResponse(choice.message, choice.finish_reason)
@@ -1101,7 +1195,7 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 if content and content.strip():
                     print(f"--- Service call successful, received a valid response from {selected_host}:{selected_port} ---")
                     tl.endpoint_failure_count = 0
-                    return content.strip()
+                    return TextResponse(content.strip(), choice.finish_reason)
                 else:
                     print(f"Warning: Attempt {attempt + 1} received an empty response from {selected_host}:{selected_port}.")
                     call_failed = True
@@ -1378,6 +1472,17 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                                            'num_rounds': round, 'task_log_dir': tl.task_log_dir,
                                            'filename': tl.current_filename})
 
+        def recognized_result(recognized):
+            # Keep the original assistant message last: the benchmark judge
+            # needs the complete Explanation / Exact Answer / Confidence text.
+            if self.memory_enabled and tl.task_log_dir:
+                self._save_trajectory_for_distillation(messages, state=tl.memory_state,
+                    trigger_reason=recognized.source, round_num=round, is_final=True)
+            return attach_resume_metadata({'question': question, 'answer': answer, 'messages': messages,
+                                           'prediction': recognized.answer, 'termination': recognized.source,
+                                           'num_rounds': round, 'task_log_dir': tl.task_log_dir,
+                                           'filename': tl.current_filename})
+
         if native_final and num_llm_calls_available == 0:
             return finalized_result('llm_call_limit')
         # Note:memory state has already been reset at the start of the function, so it does not need to be reset again here
@@ -1477,7 +1582,15 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             print(f"round: {round}, token count: {token_count}, dynamic threshold: {dynamic_threshold}")
 
             # Check whether <answer> has already appeared; if so, no further summary is needed
-            has_answer = bool(extract_non_thinking_answer(content)) and not action_calls
+            answer_profile = os.getenv('QUEST_FINAL_ANSWER_PROFILE', '')
+            has_answer = (not answer_profile and bool(extract_non_thinking_answer(content))
+                          and not action_calls)
+            benchmark_answer = recognize_benchmark_answer(
+                str(content or ''), answer_profile,
+                finish_reason=getattr(content, 'finish_reason', None),
+                has_tool_calls=bool(action_calls) or bool(visible_tool_calls(str(content or ''))))
+            if benchmark_answer:
+                return recognized_result(benchmark_answer)
 
             # Trigger 2: CONTEXT_THRESHOLD - When the token count reaches the dynamic threshold, call condenser directly
             # Check after completing the tool call and tool response, and use a flag to avoid repeated triggers(within the same round)
@@ -1724,8 +1837,31 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 return "[Visit Error] URL cannot be empty."
 
         try:
+            vector_base = os.getenv('QUEST_SEARCH_VECTOR_URL', '').strip()
+            local_results = []
+            if tool_name == 'search' and vector_base:
+                queries = tool_args.get('query', [])
+                queries = [queries] if isinstance(queries, str) else queries
+                for query in queries:
+                    try:
+                        hits = search_vector_client.search(vector_base, self._get_thread_state().task_log_dir, query,
+                            limit=max(1, min(20, int(os.getenv('QUEST_SEARCH_LOCAL_TOP_K', '3')))))
+                        if hits:
+                            local_results.append('Local search results for query: ' + query + '\n' + '\n\n'.join(
+                                f"Title: {hit.get('title', '')}\nLink: {hit.get('url', '')}\nSnippet: {hit.get('snippet', '')}"
+                                for hit in hits))
+                    except (requests.RequestException, ValueError, KeyError, TypeError, OSError) as exc:
+                        print(f'[Search vector] Local search unavailable: {type(exc).__name__}', flush=True)
             tool_args["params"] = tool_args
-            raw_result = TOOL_MAP[tool_name].call(tool_args, **kwargs)
-            return raw_result
+            result = TOOL_MAP[tool_name].call(tool_args, **kwargs)
+            if tool_name == 'search' and vector_base and isinstance(result, str):
+                try:
+                    index_id = 'E' + hashlib.sha256(result.encode()).hexdigest()
+                    search_vector_client.index(vector_base, self._get_thread_state().task_log_dir, index_id, result)
+                except (requests.RequestException, ValueError, KeyError, TypeError, OSError) as exc:
+                    print(f'[Search vector] Index failed: {type(exc).__name__}', flush=True)
+                if local_results:
+                    result += '\n\n' + '\n\n'.join(local_results)
+            return result
         except Exception as e:
             return f"[Tool Error] {str(e)}"

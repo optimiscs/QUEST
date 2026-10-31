@@ -8,6 +8,38 @@ os.environ.setdefault('CACHE_DIR','/tmp/quest-test-import')
 import tool_visit, tool_memory
 
 class ToolIntegrationTests(unittest.TestCase):
+ def test_original_summary_cache_uses_url_and_goal(self):
+  import tempfile
+  with tempfile.TemporaryDirectory() as folder, patch.object(tool_visit,'VISIT_CACHE_ENABLED',True), patch.object(tool_visit,'VISIT_CACHE_SHARD_DIR',folder), patch.object(tool_visit,'VISIT_CACHE_SHARED_FILE',''), patch.dict(os.environ,{'VISIT_EXPERIMENT_METHOD':''}):
+   cache=tool_visit.VisitCache(cache_file=str(Path(folder)/'visit.db'),resume=False,shards=1)
+   visit=tool_visit.Visit.__new__(tool_visit.Visit);visit.cache=cache
+   reads=[]; summaries=[]
+   visit.html_readpage_jina=lambda url:(reads.append(url) or 'Page has useful original information.')
+   visit.call_server=lambda messages,**kwargs:(summaries.append(messages) or '{"evidence":"original information","summary":"summary text"}')
+   first=visit.call({'url':'https://example.com','goal':'first'})
+   same=visit.call({'url':'https://example.com','goal':'first'})
+   other=visit.call({'url':'https://example.com','goal':'second'})
+   self.assertEqual(first.strip(),same.strip());self.assertIn('second',other)
+   self.assertEqual(len(reads),1);self.assertEqual(len(summaries),2)
+   cache.close()
+
+ def test_original_local_summary_uses_full_page_and_27b_settings(self):
+  calls=[]
+  class FakeOpenAI:
+   def __init__(self, **kwargs): self.chat=SimpleNamespace(completions=self)
+   def create(self, **kwargs):
+    calls.append(kwargs)
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"evidence":"page evidence","summary":"page summary"}'))])
+  visit=tool_visit.Visit.__new__(tool_visit.Visit); visit.cache=None
+  visit.html_readpage_jina=lambda url:'original page content for the specified goal'
+  env={'VISIT_EXPERIMENT_METHOD':'','VISIT_LOCAL_PROMPT_ENABLED':'true','VISIT_LOCAL_MODEL_NAME':'qwen38-27b','VISIT_LOCAL_DISABLE_THINKING':'true','VISIT_LOCAL_MAX_OUTPUT_TOKENS':'4096'}
+  with patch.dict(os.environ,env), patch.object(tool_visit,'OpenAI',FakeOpenAI):
+   result=visit.readpage_jina('https://example.com','goal')
+  self.assertIn('page evidence',result);self.assertIn('page summary',result)
+  self.assertIn('original page content',str(calls[0]['messages']))
+  self.assertEqual(calls[0]['model'],'qwen38-27b');self.assertEqual(calls[0]['max_tokens'],4096)
+  self.assertEqual(calls[0]['extra_body'],{'chat_template_kwargs':{'enable_thinking':False}})
+
  def test_experiment_flash_summary_requests_no_thinking(self):
   calls=[]
   class FakeOpenAI:

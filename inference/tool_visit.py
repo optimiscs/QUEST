@@ -743,10 +743,19 @@ class Visit(BaseTool):
                         base_url=choose_local_openai_base_url(),
                         timeout=600.0,
                     )
+                    options = {}
+                    if os.getenv('VISIT_LOCAL_DISABLE_THINKING', '').lower() == 'true':
+                        options['extra_body'] = {'chat_template_kwargs': {'enable_thinking': False}}
+                    if os.getenv('VISIT_LOCAL_MAX_OUTPUT_TOKENS'):
+                        limit = int(os.environ['VISIT_LOCAL_MAX_OUTPUT_TOKENS'])
+                        if limit <= 0:
+                            raise ValueError('VISIT_LOCAL_MAX_OUTPUT_TOKENS must be positive')
+                        options['max_tokens'] = limit
                     chat_response = client.chat.completions.create(
                         model=model_name,
                         messages=msgs,
-                        temperature=1
+                        temperature=1,
+                        **options,
                     )
                     content = chat_response.choices[0].message.content
                     if content:

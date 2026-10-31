@@ -128,7 +128,7 @@ def pack(chunks, ranked, *, top_k=8, budget=8000):
 
 def select(text, goal, method, *, embedding_url=None, reranker_url=None):
     """Select evidence with an explicit experiment method and audit metadata."""
-    if method not in {'bm25', 'embedding', 'bm25_reranker', 'hybrid', 'hybrid_reranker'}:
+    if method not in {'bm25', 'embedding', 'bm25_embedding', 'bm25_reranker', 'hybrid', 'hybrid_reranker'}:
         raise ValueError('unknown retrieval method')
     started = time.monotonic()
     pool_url = os.getenv('VISIT_BM25_POOL_URL', '').strip()
@@ -181,12 +181,14 @@ def select(text, goal, method, *, embedding_url=None, reranker_url=None):
         ranking = reciprocal_rank_fusion([lexical[:32], dense[:32]])
     else:
         ranking = lexical
-    candidate_limit = int(os.getenv('VISIT_RERANK_CANDIDATES', '32'))
+    candidate_limit = int(os.getenv('VISIT_RETRIEVAL_CANDIDATES', os.getenv('VISIT_RERANK_CANDIDATES', '32')))
     output_limit = int(os.getenv('VISIT_RETRIEVAL_TOP_K', '8'))
     if not 1 <= candidate_limit <= 512 or not 1 <= output_limit <= 512:
         raise ValueError('invalid retrieval limits')
     if method in {'bm25_reranker', 'hybrid_reranker'} and ranking:
         ranking = [i for i, _ in score(reranker_url, ranking[:candidate_limit], 'reranker')]
+    elif method == 'bm25_embedding' and ranking:
+        ranking = [i for i, _ in score(embedding_url, ranking[:candidate_limit], 'embedding')]
     if not ranking:
         selected, chosen = pack(chunks, list(range(len(chunks))), top_k=output_limit)
         if not selected:

@@ -10,7 +10,7 @@ declare -A seen_gpu=() seen_port=()
 declare -a models=() gpus=() ports=() pids=()
 for group in "$@"; do
   IFS=: read -r model ids base extra <<< "$group"
-  [[ -z ${extra:-} && $model =~ ^(27b|swift-27b|4b|4b-sft|reranker)$ && ${base:-} =~ ^[0-9]+$ && ${ids:-} =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "Invalid group: $group" >&2; usage >&2; exit 2; }
+  [[ -z ${extra:-} && $model =~ ^(27b|swift-27b|4b|4b-sft|embedding|reranker)$ && ${base:-} =~ ^[0-9]+$ && ${ids:-} =~ ^[0-9]+(,[0-9]+)*$ ]] || { echo "Invalid group: $group" >&2; usage >&2; exit 2; }
   IFS=, read -ra group_gpus <<< "$ids"
   for i in "${!group_gpus[@]}"; do
     gpu=$((10#${group_gpus[$i]})); port=$((10#$base+i))

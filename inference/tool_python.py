@@ -87,6 +87,11 @@ def _get_sandbox_fusion_endpoints() -> List[str]:
     if env_endpoint.strip():
         return [item.strip() for item in env_endpoint.split(",") if item.strip()]
 
+    # Local deployments use the isolated SandboxFusion-compatible service.
+    # An explicitly configured (but empty or missing) nodes file is an error,
+    # not permission to silently execute on a different endpoint.
+    if not os.getenv('PYTHON_NODES_CONF'):
+        return ['http://127.0.0.1:8080']
     return []
 
 

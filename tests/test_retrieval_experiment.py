@@ -57,3 +57,23 @@ def test_invalid_retrieval_limits_are_rejected(monkeypatch):
     monkeypatch.setenv('VISIT_RETRIEVAL_TOP_K', '0')
     with pytest.raises(ValueError, match='invalid retrieval limits'):
         select('red fox ocean evidence ' * 5000, 'fox', 'bm25')
+
+
+def test_bm25_embedding_scores_only_bm25_candidates(monkeypatch):
+    import retrieval_experiment as retrieval
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): return {'scores': [0.1, 0.9]}
+    sent = []
+    def post(url, json, timeout):
+        sent.append(json['passages'])
+        return Response()
+    monkeypatch.delenv('VISIT_BM25_POOL_URL', raising=False)
+    monkeypatch.setenv('VISIT_RETRIEVAL_TOP_K', '1')
+    monkeypatch.setattr(retrieval, 'count_tokens', lambda text: 3000 if text == 'original' else 1)
+    monkeypatch.setattr(retrieval, 'split_chunks', lambda text: [retrieval.Chunk('first', 0), retrieval.Chunk('second', 1), retrieval.Chunk('not selected', 2)])
+    monkeypatch.setattr(retrieval, 'bm25_rank', lambda chunks, goal: [0, 1])
+    monkeypatch.setattr(retrieval.requests, 'post', post)
+    selected, audit = retrieval.select('original', 'goal', 'bm25_embedding', embedding_url='http://embedding')
+    assert sent == [['first', 'second']]
+    assert selected == 'second' and audit['selected_indices'] == [1]
