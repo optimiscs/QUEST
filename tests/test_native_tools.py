@@ -83,6 +83,8 @@ def test_native_prompt_ignores_legacy_profile_and_disabled_tools(monkeypatch):
 
 def agent_with_api(monkeypatch, tmp_path, responses, max_rounds=7):
     monkeypatch.setenv('QUEST_NATIVE_TOOL_CALLS', 'true')
+    # These fixtures return complete responses, not streaming chunks.
+    monkeypatch.setenv('QUEST_TELEMETRY_STREAM', '0')
     monkeypatch.delenv('QUEST_DEEPSEEK_TEACHER', raising=False)
     monkeypatch.setenv('MEMORY_ENABLED', 'false')
     monkeypatch.setenv('TASK_LOG_DIR', str(tmp_path))
