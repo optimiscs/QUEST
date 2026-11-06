@@ -285,6 +285,53 @@
         }
       }
     },
+    "/api/v1/runs/{run_id}/traces/{trace_id}/tool-events": {
+      "get": {
+        "summary": "Trace Tool Events",
+        "description": "Compact tool outcomes; unchanged polling never reloads the large body.",
+        "operationId": "trace_tool_events_api_v1_runs__run_id__traces__trace_id__tool_events_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "trace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Trace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/runs/{run_id}/export": {
       "get": {
         "summary": "Export Run",
