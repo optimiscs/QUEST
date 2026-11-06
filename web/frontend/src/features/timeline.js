@@ -1,10 +1,26 @@
+// Missing timings must stay unknown: never draw a synthetic zero-time bar.
+function hasSpan(step, type) {
+  return Number.isFinite(step[`${type}Start`]) && step[`${type}Start`] >= 0 &&
+    Number.isFinite(step[`${type}_seconds`]) && step[`${type}_seconds`] >= 0;
+}
+
+export function recordedTiming(c) {
+  const models = c.steps.filter((step) => hasSpan(step, "model"));
+  const tools = c.steps.filter((step) => ["search", "read", "compute"].includes(step.kind));
+  const recordedTools = tools.filter((step) => hasSpan(step, "tool"));
+  const modelEnd = models.map((step) => step.modelStart + step.model_seconds);
+  const toolEnd = recordedTools.map((step) => step.toolStart + step.tool_seconds);
+  return { models, tools: recordedTools, modelExpected: c.steps.length, toolExpected: tools.length,
+    total: Math.max(1, Number.isFinite(c.durationSeconds) ? c.durationSeconds : 0, ...modelEnd, ...toolEnd) };
+}
+
 export function createTimeline(context) {
   const { state, dom, activeCase, $$, formatAxis, escapeAttr, formatDuration, number, formatSeconds, escapeHTML, pad } = context;
   function makeBar(step, start, duration, total, type, role) {
     const safeTotal = Math.max(1, total);
     const left = Math.min(99.6, Math.max(0, (Number(start || 0) / safeTotal) * 100));
     const width = Math.min(100 - left, Math.max(0.45, (Number(duration || 0) / safeTotal) * 100));
-    const title = `第 ${step.n} 轮 · ${type === "model" ? "模型" : step.label} · ${formatSeconds(duration)} · ${formatAxis(start)}`;
+    const title = `第 ${step.n} 轮 · ${type === "model" ? (step.modelTimingKind === "finalization" ? "最终回答生成（含重试）" : "模型") : step.label} · ${formatSeconds(duration)} · ${formatAxis(start)}`;
     return `<button type="button" class="chart-bar ${type}" data-chart-step="${step.n}" data-chart-role="${role}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}"></button>`;
   }
 
@@ -18,27 +34,29 @@ export function createTimeline(context) {
   }
 
   function renderDurationChart(c) {
-    if (c.timingAvailable === false) {
+    const timing = recordedTiming(c);
+    if (!timing.models.length && !timing.tools.length) {
       dom.chartTitle.textContent = "执行时间线";
       dom.chartSub.textContent = "时间未记录";
       dom.chartLegend.innerHTML = "";
-      dom.timelineVisual.innerHTML = "<div class=\"log-empty\">此轨迹未记录完整的步骤耗时，无法绘制时间线。</div>";
+      dom.timelineVisual.innerHTML = "<div class=\"log-empty\">此轨迹没有可可靠匹配的步骤耗时；可切换到轮次分布查看。</div>";
       return;
     }
-    const total = c.durationSeconds;
-    const modelBars = c.steps.map((step) => makeBar(step, step.modelStart, step.model_seconds, total, "model", "assistant"));
-    const searchBars = c.steps
+    const total = timing.total;
+    const modelBars = timing.models.map((step) => makeBar(step, step.modelStart, step.model_seconds, total, "model", "assistant"));
+    const searchBars = timing.tools
       .filter((step) => step.kind === "search")
       .map((step) => makeBar(step, step.toolStart, step.tool_seconds, total, "search", "tool"));
-    const readBars = c.steps
+    const readBars = timing.tools
       .filter((step) => step.kind === "read")
       .map((step) => makeBar(step, step.toolStart, step.tool_seconds, total, "read", "tool"));
-    const computeBars = c.steps
+    const computeBars = timing.tools
       .filter((step) => step.kind === "compute")
       .map((step) => makeBar(step, step.toolStart, step.tool_seconds, total, "compute", "tool"));
     const readLane = laneHTML("读取 / 计算", "read", [...readBars, ...computeBars]);
     dom.chartTitle.textContent = "执行时间线";
-    dom.chartSub.textContent = `${formatDuration(c.durationSeconds)} · 真实调用跨度`;
+    const partial = timing.models.length < timing.modelExpected || timing.tools.length < timing.toolExpected;
+    dom.chartSub.textContent = `${formatDuration(total)} · ${partial ? "部分耗时缺失，仅显示已记录部分" : "真实调用跨度"}`;
     dom.chartLegend.innerHTML = [
       ["model", "模型"],
       ["search", "搜索"],
@@ -48,7 +66,7 @@ export function createTimeline(context) {
       .filter(Boolean)
       .map(([type, label]) => `<span><i class="legend-dot ${type}"></i>${label}</span>`)
       .join("");
-    dom.timelineVisual.innerHTML = `${axisHTML(total)}<div class="chart-lanes">${laneHTML("模型", "model", modelBars)}${laneHTML("搜索", "search", searchBars)}${readLane}</div><div class="chart-footnote"><span>记录窗口 ${formatDuration(total)}</span><span>点击色块定位事件</span></div>`;
+    dom.timelineVisual.innerHTML = `${axisHTML(total)}<div class="chart-lanes">${laneHTML("模型", "model", modelBars)}${laneHTML("搜索", "search", searchBars)}${readLane}</div><div class="chart-footnote"><span>已记录模型步骤 ${timing.models.length}/${timing.modelExpected} · 工具调用 ${timing.tools.length}/${timing.toolExpected}</span><span>点击色块定位事件</span></div>`;
   }
 
   function renderRoundsChart(c) {
@@ -79,25 +97,26 @@ export function createTimeline(context) {
   }
 
   function renderCallsChart(c) {
-    if (c.timingAvailable === false) {
+    const timing = recordedTiming(c);
+    if (!timing.tools.length) {
       dom.chartTitle.textContent = "工具调用";
       dom.chartSub.textContent = `${number(c.stats.searchCalls + c.stats.readCalls + c.stats.computeCalls)} 次调用 · 时间未记录`;
       dom.chartLegend.innerHTML = "";
-      dom.timelineVisual.innerHTML = "<div class=\"log-empty\">此轨迹未记录工具调用耗时，无法绘制时间线。</div>";
+      dom.timelineVisual.innerHTML = "<div class=\"log-empty\">此轨迹没有可可靠匹配的工具调用耗时；可切换到轮次分布查看。</div>";
       return;
     }
-    const total = c.durationSeconds;
-    const searchBars = c.steps
+    const total = timing.total;
+    const searchBars = timing.tools
       .filter((step) => step.kind === "search")
       .map((step) => makeBar(step, step.toolStart, step.tool_seconds, total, "search", "tool"));
-    const readBars = c.steps
+    const readBars = timing.tools
       .filter((step) => step.kind === "read")
       .map((step) => makeBar(step, step.toolStart, step.tool_seconds, total, "read", "tool"));
-    const computeBars = c.steps
+    const computeBars = timing.tools
       .filter((step) => step.kind === "compute")
       .map((step) => makeBar(step, step.toolStart, step.tool_seconds, total, "compute", "tool"));
     dom.chartTitle.textContent = "工具调用";
-    dom.chartSub.textContent = `${number(c.stats.searchCalls + c.stats.readCalls + c.stats.computeCalls)} 次调用 · ${formatDuration(c.durationSeconds)}`;
+    dom.chartSub.textContent = `${number(timing.toolExpected)} 次调用 · 已记录耗时 ${timing.tools.length}/${timing.toolExpected}${timing.tools.length < timing.toolExpected ? " · 部分耗时缺失" : ""}`;
     dom.chartLegend.innerHTML = [
       ["search", `搜索 ${c.stats.searchCalls}`],
       ["read", `读取 ${c.stats.readCalls}`],

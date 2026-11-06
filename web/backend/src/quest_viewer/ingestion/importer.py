@@ -24,6 +24,7 @@ SUMMARY_FIELDS = (
     "stats",
     "correct",
     "inProgress",
+    "evaluationStatus",
     "interrupted",
     "score",
     "scoredDimensions",

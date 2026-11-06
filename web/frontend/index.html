@@ -52,6 +52,10 @@
           <svg class="icon"><use href="#i-message"/></svg>
           <span>对话概览</span>
         </button>
+        <a class="nav-item" href="/tool-dashboard.html" title="跨轨迹查看工具成功率与失败原因">
+          <svg class="icon"><use href="#i-activity"/></svg>
+          <span>工具成功率看板</span>
+        </a>
         <a class="nav-item" href="/vllm-dashboard.html" title="打开 vLLM 实时大屏">
           <svg class="icon"><use href="#i-activity"/></svg>
           <span>vLLM 实时大屏</span>
@@ -203,6 +207,10 @@
               <button type="button" class="metric-button" data-chart-mode="calls">
                 <svg class="icon"><use href="#i-list"/></svg><span>调用</span>
               </button>
+            </div>
+            <div class="metric-switch" id="sftLanguageSwitch" role="group" aria-label="轨迹语言" hidden>
+              <button type="button" class="metric-button is-active" data-trace-language="zh" aria-pressed="true">中文译文</button>
+              <button type="button" class="metric-button" data-trace-language="en" aria-pressed="false">英文原文</button>
             </div>
             <div class="trajectory-search">
               <svg class="icon search-icon"><use href="#i-search"/></svg>

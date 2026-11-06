@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="搜索行为图谱：比较不同轨迹中的重复查询、近重复、拓展与新方向。">
+  <title>搜索行为图谱 · Quest</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231d4ed8'/%3E%3Ctext x='16' y='22' font-family='Arial' font-size='18' font-weight='700' fill='white' text-anchor='middle'%3EQ%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/src/search-behavior.css">
+  <script type="module" src="/src/search-behavior.js"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <a class="brand" href="/trace-viewer-zh/" aria-label="Quest 首页">
+        <span class="brand-icon">Q</span>
+        <strong>QUEST</strong>
+        <span class="brand-divider"></span>
+        <span class="brand-sub">SEARCH BEHAVIOR</span>
+      </a>
+      <div class="top-actions">
+        <span class="snapshot-pill"><span class="snapshot-dot"></span>数据快照</span>
+        <a class="back-link" href="/trace-viewer-zh/">返回轨迹 <span>↗</span></a>
+      </div>
+    </header>
+
+    <main>
+      <section class="headline">
+        <div class="headline-copy">
+          <p class="eyebrow">QUERY TRAJECTORY ANALYSIS</p>
+          <h1>搜索行为图谱<span>Search behavior</span></h1>
+          <p class="lede">同样的问题，有的轨迹反复追问，有的轨迹不断换词、换实体、换方向。</p>
+        </div>
+        <div class="snapshot">
+          <span>数据快照</span>
+          <strong id="generated-at">—</strong>
+          <small id="dataset-summary">正在读取</small>
+        </div>
+      </section>
+
+      <section class="toolbar" aria-label="筛选">
+        <label class="run-control">
+          <span>评估集</span>
+          <select id="run-select" aria-label="选择评估集"></select>
+        </label>
+        <label class="check-control">
+          <input id="completed-only" type="checkbox" checked>
+          <span>仅已完成</span>
+        </label>
+        <p class="toolbar-note">重复率按首条之后的查询计算</p>
+      </section>
+
+      <div id="loading" class="loading" role="status">正在加载搜索轨迹…</div>
+      <div id="load-error" class="load-error" hidden></div>
+
+      <section class="kpis" aria-label="概览">
+        <article class="kpi">
+          <p>纳入轨迹 <span>TRACES</span></p>
+          <strong id="kpi-traces">—</strong>
+          <small id="kpi-traces-note">当前筛选</small>
+        </article>
+        <article class="kpi">
+          <p>中位查询 <span>MEDIAN QUERIES</span></p>
+          <strong id="kpi-median">—</strong>
+          <small>每条轨迹的查询次数</small>
+        </article>
+        <article class="kpi">
+          <p>重复 / 近重复 <span>REPEAT SHARE</span></p>
+          <strong id="kpi-repeat">—</strong>
+          <small>占后续查询</small>
+        </article>
+        <article class="kpi">
+          <p>拓展查询 <span>EXPANSION SHARE</span></p>
+          <strong id="kpi-expand">—</strong>
+          <small id="kpi-expand-note">含新方向查询</small>
+        </article>
+      </section>
+
+      <section class="workspace">
+        <article class="panel chart-panel">
+          <header class="panel-head chart-head">
+            <div>
+              <p class="eyebrow">BEHAVIOUR MAP</p>
+              <h2>重复与拓展分布</h2>
+            </div>
+            <p class="panel-help">点 = 一条轨迹 · 点击查看路径</p>
+          </header>
+          <div id="behaviour-legend" class="behaviour-legend" aria-label="行为分类图例"></div>
+          <div class="chart-wrap">
+            <svg id="scatter" viewBox="0 0 720 420" role="img" aria-label="各轨迹重复率与新方向率分布"></svg>
+            <div id="chart-tooltip" class="chart-tooltip" hidden></div>
+            <div id="chart-empty" class="empty chart-empty" hidden>
+              <strong>当前筛选下没有轨迹</strong>
+              <span>取消「仅已完成」以查看进行中或已中断的轨迹。</span>
+            </div>
+          </div>
+          <div class="chart-foot">
+            <span>横轴 · 重复 / 近重复占比</span>
+            <span>纵轴 · 新方向占比</span>
+            <span>点大小 · 查询次数</span>
+          </div>
+        </article>
+
+        <article class="panel detail-panel">
+          <header class="panel-head detail-head">
+            <div>
+              <p class="eyebrow">TRAJECTORY DETAIL</p>
+              <h2>查询路径</h2>
+            </div>
+            <select id="case-select" class="case-select" aria-label="选择轨迹"></select>
+          </header>
+          <div id="detail-empty" class="empty detail-empty" hidden>
+            <strong>没有可展示的轨迹</strong>
+            <span>换一个评估集，或取消「仅已完成」。</span>
+          </div>
+          <div id="detail-content" class="detail-content" hidden>
+            <div class="case-heading">
+              <div class="case-tags">
+                <span id="case-id" class="case-id">—</span>
+                <span id="case-status" class="status-pill">—</span>
+              </div>
+              <h3 id="case-question">—</h3>
+              <p id="case-meta" class="case-meta">—</p>
+            </div>
+
+            <div class="case-figures">
+              <div><span>查询</span><strong id="case-queries">—</strong></div>
+              <div><span>轮次</span><strong id="case-rounds">—</strong></div>
+              <div><span>重复</span><strong id="case-repeat">—</strong></div>
+              <div><span>拓展</span><strong id="case-expand">—</strong></div>
+            </div>
+
+            <div class="verdict-row">
+              <span id="case-behaviour" class="behaviour-pill">—</span>
+              <span id="case-unique" class="verdict-meta">—</span>
+            </div>
+
+            <div class="fingerprint-block">
+              <div class="section-label"><span>查询指纹</span><span id="fingerprint-caption">按发生顺序</span></div>
+              <div id="fingerprint" class="fingerprint" aria-label="查询分类指纹"></div>
+              <div id="category-legend" class="category-legend" aria-label="查询分类图例"></div>
+            </div>
+
+            <p id="case-insight" class="insight"></p>
+
+            <div class="query-section">
+              <div class="section-label">
+                <span>查询序列</span>
+                <span id="query-caption">—</span>
+              </div>
+              <ol id="query-list" class="query-list"></ol>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel table-panel">
+        <header class="panel-head table-head">
+          <div>
+            <p class="eyebrow">TRAJECTORY INDEX</p>
+            <h2>轨迹索引 <span id="table-count">—</span></h2>
+          </div>
+          <p class="panel-help">按重复占比降序 · 点击行查看</p>
+          <p class="mobile-table-hint">左右滑动查看完整表格</p>
+        </header>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>轨迹</th>
+                <th>状态</th>
+                <th>查询</th>
+                <th>重复</th>
+                <th>新方向</th>
+                <th>行为</th>
+                <th>查询指纹</th>
+              </tr>
+            </thead>
+            <tbody id="case-rows"></tbody>
+          </table>
+        </div>
+        <div id="table-empty" class="empty table-empty" hidden>
+          <strong>没有可展示的轨迹</strong>
+          <span>当前筛选条件没有结果。</span>
+        </div>
+      </section>
+
+      <section class="panel notes">
+        <div class="notes-head">
+          <p class="eyebrow">METHOD</p>
+          <h2>判定口径</h2>
+        </div>
+        <div class="notes-grid">
+          <p><strong>查询相似度</strong>归一化后比较 token Jaccard。完全相同为「完全重复」，≥ 0.75 为「近重复」，0.30–0.75 为「逐步拓展」，&lt; 0.30 为「新方向」。</p>
+          <p><strong>行为判定</strong>首条查询不计入重复率。重复 ≥ 45% 且新方向 &lt; 35% 为「反复追问」；重复 &lt; 30% 且拓展 + 新方向 ≥ 70% 为「持续拓展」；其余为「混合迭代」。</p>
+          <p><strong>数据范围</strong>来自 Quest trace viewer 的搜索快照，仅保留 query、轮次、结果数、耗时与分类；不包含思考过程、网页正文和答案内容。</p>
+          <p><strong>读图提示</strong>相似度是启发式近似，不代表语义完全等价；把阈值与具体 query 放在一起看，比只看标签更可靠。</p>
+        </div>
+      </section>
+
+      <footer>
+        <span>QUEST</span><i>·</i><span>SEARCH BEHAVIOR ATLAS</span><i>·</i><span>QUERY SNAPSHOT</span><i>·</i><span id="footer-generated">—</span>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

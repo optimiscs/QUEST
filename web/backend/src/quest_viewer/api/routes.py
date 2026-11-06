@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 
 from quest_viewer.api.schemas import Manifest, RunInfo, TaskPage, TraceDocument, WorkspaceStatus
 from quest_viewer.api.vllm_metrics import scrape_all
+from quest_viewer.api.tool_health import tool_events
 from quest_viewer.db.models import Report, Run, Trace, TracePayload
 
 router = APIRouter(prefix="/api/v1")
@@ -134,6 +135,24 @@ def session_stats(request: Request, run_id: str, trace_id: str, response: Respon
             "sessionStats": body.get("sessionStats", {}),
             "timing": body.get("timing", {}),
         }
+
+
+@router.get("/runs/{run_id}/traces/{trace_id}/tool-events")
+def trace_tool_events(request: Request, run_id: str, trace_id: str, response: Response):
+    """Compact tool outcomes; unchanged polling never reloads the large body."""
+    with factory(request)() as session:
+        session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+        trace = session.get(Trace, (run_id, trace_id))
+        if trace is None:
+            raise HTTPException(404, "Trace not found")
+        revision = 'tool-health-v1-' + trace.revision
+        if not_modified(request, revision):
+            return Response(status_code=304, headers=cache_headers(revision))
+        body = session.scalar(select(TracePayload.body).where(
+            TracePayload.run_id == run_id, TracePayload.trace_id == trace_id))
+        response.headers.update(cache_headers(revision))
+        return {"traceId": trace_id, "revision": trace.revision,
+                "inProgress": body.get("inProgress", False), "events": tool_events(body)}
 
 
 @router.get("/runs/{run_id}/export")
