@@ -135,6 +135,23 @@ def test_finalizer_disables_native_tools(monkeypatch, tmp_path):
     assert [r['tool_choice'] for r in requests] == ['auto', 'none']
 
 
+def test_source_guard_blocks_execution_and_retries_unobserved_final_citation(monkeypatch, tmp_path):
+    monkeypatch.setenv('QUEST_SOURCE_IDS', 'true')
+    agent, requests = agent_with_api(monkeypatch, tmp_path, [
+        reply('visit', '{"url":["https://invented.test"],"goal":"facts"}', call_id='bad'),
+        reply(content='{"answer":"Fact [S1]"}', finish='stop'),
+        reply(content='{"answer":"Unknown: no verified evidence was obtained."}', finish='stop'),
+    ], max_rounds=4)
+    agent.custom_call_tool = lambda *args: pytest.fail('unregistered URL must not execute')
+    result = agent._run({'item': {'question': 'Check https://seed.test', 'answer': ''}}, 'test-model')
+    assert result['prediction'].startswith('Unknown')
+    feedback = [m for m in result['messages'] if m['role'] == 'tool']
+    assert feedback[0]['tool_call_id'] == 'bad' and 'Source constraint' in feedback[0]['content']
+    assert 'citation_has_no_tool_observation' in requests[-1]['messages'][-1]['content']
+    for path in tmp_path.rglob('sources.json'):
+        assert 'https://invented.test' not in json.loads(path.read_text()).values()
+
+
 def test_browsecomp_exact_answer_finishes_without_regeneration(monkeypatch, tmp_path):
     monkeypatch.setenv('QUEST_FINAL_ANSWER_PROFILE', 'browsecomp')
     monkeypatch.setenv('QUEST_TELEMETRY_STREAM', '0')
@@ -157,6 +174,20 @@ def test_browsecomp_tag_answer_finishes_without_regeneration(monkeypatch, tmp_pa
     assert result['prediction'] == 'Clare Wigfall'
     assert result['termination'] == 'browsecomp_answer_tag'
     assert result['messages'][-1]['content'] == original
+
+
+def test_browsecomp_exact_profile_recovers_invalid_tag_with_structured_final(monkeypatch, tmp_path):
+    monkeypatch.setenv('QUEST_FINAL_ANSWER_PROFILE', 'browsecomp_exact')
+    monkeypatch.setenv('QUEST_TELEMETRY_STREAM', '0')
+    final = 'Explanation: Evidence.\nExact Answer: A; B\nConfidence: 90%'
+    agent, requests = agent_with_api(monkeypatch, tmp_path, [
+        reply(content='<answer>Unstructured report</answer>', finish='stop'),
+        reply(content=json.dumps({'answer': final}), finish='stop'),
+    ])
+    result = agent._run({'item': {'question': 'test', 'answer': ''}}, 'test-model')
+    assert result['prediction'] == 'A; B'
+    assert result['messages'][-1]['content'] == '<answer>' + final + '</answer>'
+    assert requests[-1]['tool_choice'] == 'none'
 
 
 @pytest.mark.parametrize('native,text', [
@@ -197,7 +228,8 @@ def test_memory_events_strip_only_matching_embedded_state(monkeypatch, tmp_path)
     snapshot = copy.deepcopy(messages)
     captured = {}
     class FakeMemory:
-        def call(self, params):
+        def call(self, params, **kwargs):
+            assert kwargs['_context_threshold_triggered'] is True
             captured.update(copy.deepcopy(params))
             return json.dumps({'facts': ['updated']})
     monkeypatch.setitem(react_agent.TOOL_MAP, 'condenser', FakeMemory())
@@ -230,7 +262,8 @@ def test_memory_summarizes_old_turns_and_keeps_three_complete_recent_turns(monke
     original = copy.deepcopy(messages)
     captured = {}
     class FakeMemory:
-        def call(self, params):
+        def call(self, params, **kwargs):
+            assert kwargs['_context_threshold_triggered'] is True
             captured.update(copy.deepcopy(params))
             return '{"facts":["old evidence"]}'
     monkeypatch.setitem(react_agent.TOOL_MAP, 'condenser', FakeMemory())
@@ -245,7 +278,7 @@ def test_memory_skips_when_no_older_turns(monkeypatch, tmp_path):
     agent, _ = agent_with_api(monkeypatch, tmp_path, [])
     agent._init_thread_state()
     messages = [{'role': 'user', 'content': 'q'}] + [{'role': 'assistant', 'content': str(i)} for i in range(3)]
-    monkeypatch.setitem(react_agent.TOOL_MAP, 'condenser', SimpleNamespace(call=lambda *_: pytest.fail('unexpected summary')))
+    monkeypatch.setitem(react_agent.TOOL_MAP, 'condenser', SimpleNamespace(call=lambda *_, **kw: pytest.fail('unexpected summary')))
     original = copy.deepcopy(messages)
     assert agent._call_condenser_directly(messages) is None
     assert messages == original
@@ -257,7 +290,7 @@ def test_failed_memory_keeps_original_history_and_state(monkeypatch, tmp_path):
     agent._get_thread_state().memory_state = {'facts': ['original']}
     messages = [{'role': 'user', 'content': 'q'}] + [{'role': 'assistant', 'content': str(i)} for i in range(4)]
     original = copy.deepcopy(messages)
-    monkeypatch.setitem(react_agent.TOOL_MAP, 'condenser', SimpleNamespace(call=lambda *_: 'invalid json'))
+    monkeypatch.setitem(react_agent.TOOL_MAP, 'condenser', SimpleNamespace(call=lambda *_, **kw: 'invalid json'))
     assert agent._call_condenser_directly(messages) is None
     assert messages == original
     assert agent._get_thread_state().memory_state == {'facts': ['original']}

@@ -1,0 +1,38 @@
+import { test, expect } from '@playwright/test';
+
+test('cross-run selection, true zero filter, live polling and saved selection', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto('/tool-dashboard.html?dataset=fair120-20261106-step39&trace=row0001');
+  await expect(page.locator('#selection-count')).toHaveText('1');
+  await expect(page.locator('#sync')).toContainText('同步完成');
+  await expect(page.locator('#chart svg')).toBeVisible();
+  await page.locator('#status-filter').selectOption('zero');
+  await expect(page.locator('#details')).toContainText('成功 · 零结果');
+  await expect(page.locator('#details')).not.toContainText('timeout');
+  await page.locator('#dataset').selectOption('fair120-20261106-step76');
+  await expect(page.locator('#trace-list [data-id="row0001"]')).not.toBeChecked();
+  await page.locator('#trace-list [data-id="row0001"]').check();
+  await expect(page.locator('#selection-count')).toHaveText('2');
+  await expect(page.locator('#sync')).toContainText('同步完成');
+  await page.locator('#chart-mode').selectOption('live');
+  await expect(page.locator('#chart svg')).toBeVisible();
+  const cached = page.waitForResponse(r => r.url().includes('/tool-events') && r.status() === 304);
+  await page.locator('#refresh').click();
+  await cached;
+  await expect(page.locator('#sync')).toContainText('同步完成');
+  await page.locator('#status-filter').selectOption('failed');
+  await page.locator('[data-reason="超时"]').click();
+  await expect(page.locator('#detail-count')).toContainText('超时');
+  await expect(page.locator('#details')).toContainText('超时');
+  await page.screenshot({ path: '/root/autodl-tmp/Quest/workspace/viewer/tool-dashboard-desktop.png', fullPage:true });
+  await page.reload();
+  await expect(page.locator('#selection-count')).toHaveText('2');
+  await expect(page.locator('#sync')).toContainText('同步完成');
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.locator('#clear').click();
+  await expect(page.locator('#selection-count')).toHaveText('0');
+  await expect(page.locator('#rate')).toHaveText('—');
+  expect(errors).toEqual([]);
+});
