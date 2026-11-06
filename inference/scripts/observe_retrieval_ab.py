@@ -24,6 +24,12 @@ if os.environ.get('QUEST_HTTPS_PROXY_OVERRIDE'):
 old_extra = "def extra(kind,loc):\n data={}"
 new_extra = """def extra(kind,loc):
  data={}
+ if os.environ.get('QUEST_SOURCE_IDS','').lower() in ('1','true','yes'):
+  if kind=='policy_model' and isinstance(loc.get('request_kwargs'),dict):
+   data['api_request_context']=safe({k:loc['request_kwargs'][k] for k in ('messages','tools') if k in loc['request_kwargs']})
+   data['api_request_options']=safe({k:loc['request_kwargs'][k] for k in ('model','tool_choice','extra_body','response_format','max_tokens') if k in loc['request_kwargs']})
+  if kind=='memory_api' and isinstance(loc.get('full_messages'),list):
+   data['api_request_context']=safe({'messages':loc['full_messages']})
  if kind=='policy_model':
   if isinstance(loc.get('ttft_seconds'),(int,float)):
    data['ttft_seconds']=loc['ttft_seconds']

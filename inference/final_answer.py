@@ -50,7 +50,15 @@ def browsecomp_answer(content: str) -> FinalAnswer | None:
     return browsecomp_exact_answer(content)
 
 
-RECOGNIZERS = {'browsecomp': browsecomp_answer}
+def browsecomp_exact_fields(content: str) -> FinalAnswer | None:
+    """Extract the Exact Answer line even when the three fields are wrapped in answer tags."""
+    visible = _visible_without_fenced_code(content)
+    if '<tool_call>' in visible or '</tool_call>' in visible:
+        return None
+    return browsecomp_exact_answer(visible.replace('<answer>', '').replace('</answer>', ''))
+
+
+RECOGNIZERS = {'browsecomp': browsecomp_answer, 'browsecomp_exact': browsecomp_exact_fields}
 
 
 def recognize_benchmark_answer(content: str, profile: str, *, finish_reason: str | None,
