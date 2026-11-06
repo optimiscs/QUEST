@@ -1,0 +1,21 @@
+{
+  "repository": "Quest",
+  "inventory_scope": "Previously untracked files omitted from this source publication; metadata only, not a backup",
+  "files": 7,
+  "bytes": 96088,
+  "created_at": "2026-11-06",
+  "grouped_by_top_level": {
+    "evaluation": {
+      "files": 3,
+      "bytes": 34411
+    },
+    "training_scripts": {
+      "files": 3,
+      "bytes": 57344
+    },
+    "简历_搜索Agent算法实习.md": {
+      "files": 1,
+      "bytes": 4333
+    }
+  }
+}

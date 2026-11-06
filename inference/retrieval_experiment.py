@@ -157,6 +157,8 @@ def select(text, goal, method, *, embedding_url=None, reranker_url=None):
         lexical = bm25_rank(chunks, goal) if method != 'embedding' else []
     dense = []
     durations = {}
+    score_audit = {}
+    score_metadata = {}
 
     def score(url, indices, stage):
         if not url:
@@ -167,9 +169,14 @@ def select(text, goal, method, *, embedding_url=None, reranker_url=None):
         # a five-minute timeout turns ordinary queueing into lost evidence.
         response = requests.post(url.rstrip('/') + '/score', json={'goal': goal, 'passages': [chunks[i].text for i in indices]}, timeout=(10, 7200))
         response.raise_for_status()
-        values = response.json()['scores']
+        result = response.json()
+        values = result['scores']
         if len(values) != len(indices):
             raise ValueError(f'{stage} returned wrong number of scores')
+        score_audit[stage] = [{'chunk_index': index, 'score': value}
+                              for index, value in zip(indices, values)]
+        score_metadata[stage] = {key: result[key] for key in ('model', 'model_revision', 'vector_batch_id')
+                                 if key in result}
         durations[stage] = time.monotonic() - start
         return sorted(zip(indices, values), key=lambda pair: (-pair[1], pair[0]))
 
@@ -197,4 +204,4 @@ def select(text, goal, method, *, embedding_url=None, reranker_url=None):
     selected, chosen = pack(chunks, ranking, top_k=output_limit)
     if not selected:
         raise ValueError('no ranked evidence block fits within the 8000 token budget')
-    return selected, {'reason': 'selected', 'input_tokens': original_tokens, 'output_tokens': count_tokens(selected), 'chunks': len(chunks), 'selected_indices': chosen, 'ranked_indices': ranking[:candidate_limit], 'stage_seconds': durations, 'total_seconds': time.monotonic() - started}
+    return selected, {'reason': 'selected', 'input_tokens': original_tokens, 'output_tokens': count_tokens(selected), 'chunks': len(chunks), 'selected_indices': chosen, 'ranked_indices': ranking[:candidate_limit], 'scores_by_stage': score_audit, 'score_model_metadata': score_metadata, 'stage_seconds': durations, 'total_seconds': time.monotonic() - started}

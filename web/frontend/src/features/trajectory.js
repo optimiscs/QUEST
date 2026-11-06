@@ -19,7 +19,7 @@ export function createTrajectory(context) {
     return `<details class="log-row is-assistant${step.kind === "answer" ? " is-answer" : ""}" data-step="${step.n}" data-role="assistant">
       <summary>
         <span class="log-dot"></span>
-        ${roleChip("assistant")}
+        ${step.sourceRole && step.sourceRole !== "assistant" ? `<span class="role-chip role-tool">${escapeHTML(step.label || step.sourceRole)}</span>` : roleChip("assistant")}
         <span class="log-summary-main"><span class="log-summary-text">${escapeHTML(preview)}</span></span>
         <span class="log-meta">${pad(step.n)} · ${formatSeconds(step.model_seconds)}</span>
         ${icon("chevron", "icon log-chevron")}
@@ -114,6 +114,10 @@ export function createTrajectory(context) {
       body = queries.length
         ? queries
             .map((query) => {
+              const error = query.error || step.tool?.error;
+              const pending = query.status === "pending" || step.tool?.status === "pending";
+              const countLabel = error ? "搜索失败" : pending ? "等待返回" : `${number(query.count)} 条结果`;
+              const emptyLabel = error ? `搜索失败：${error}` : pending ? "搜索进行中，尚未返回。" : "搜索成功，未找到匹配结果。";
               const results = (query.results || [])
                 .map((result) => {
                   const url = safeURL(result.url);
@@ -125,8 +129,8 @@ export function createTrajectory(context) {
                 })
                 .join("");
               return `<div class="query-block">
-                <div class="query-line"><strong>${escapeHTML(query.query)}</strong><span>${number(query.count)} 条结果</span></div>
-                <div class="query-results">${results || `<span class="tool-empty">未返回结果</span>`}</div>
+                <div class="query-line"><strong>${escapeHTML(query.query)}</strong><span>${escapeHTML(countLabel)}</span></div>
+                <div class="query-results">${results || `<span class="tool-empty">${escapeHTML(emptyLabel)}</span>`}</div>
               </div>`;
             })
             .join("")
@@ -165,7 +169,7 @@ export function createTrajectory(context) {
       </div>`;
     }
     const headerDetail = step.kind === "search"
-      ? `${(step.tool?.queries || []).length} 次查询 · ${number(step.tool?.resultCount || 0)} 条结果`
+      ? `${(step.tool?.queries || []).length} 次查询 · ${step.tool?.error || step.tool?.status === "error" ? "搜索失败" : step.tool?.status === "pending" ? "等待返回" : number(step.tool?.resultCount || 0) + " 条结果"}`
       : step.kind === "read"
         ? `${(step.tool?.pages || []).length} 个页面`
         : "Python 解释器";

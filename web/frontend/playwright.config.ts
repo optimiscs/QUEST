@@ -1,6 +1,7 @@
 import { defineConfig } from '@playwright/test';
 import { resolve } from 'node:path';
 export default defineConfig({
+  globalTeardown: './tests/stop-ci-viewer.ts',
   testDir: 'tests/e2e',
   outputDir: '../../workspace/viewer/test-results',
   timeout: 60000,

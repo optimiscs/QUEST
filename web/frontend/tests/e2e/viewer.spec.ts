@@ -88,13 +88,19 @@ test('desktop and mobile match the original visual baselines', async ({ page }, 
   for (const [name, viewport] of Object.entries({ desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 } })) {
     await page.setViewportSize(viewport);
     await page.goto('/trace-viewer-zh/'); await loaded(page);
-    // Compare the original layout separately from the new status bar and dashboard entry.
+    // Compare the original layout separately from the status bar and dashboard entries.
     await expect(page.locator('a[href="/vllm-dashboard.html"]')).toHaveCount(1);
-    await page.addStyleTag({ content: '.session-status, a[href="/vllm-dashboard.html"] { display: none !important; }' });
+    await expect(page.locator('a[href="/tool-dashboard.html"]')).toHaveCount(1);
+    await page.addStyleTag({ content: '.session-status, a[href="/vllm-dashboard.html"], a[href="/tool-dashboard.html"] { display: none !important; }' });
     for (const mode of ['trajectory', 'overview']) {
       if (mode === 'overview') await page.locator('#tabOverview').click();
-      const before = PNG.sync.read(await fs.readFile(new URL(`../visual/${name}-${mode}.png`, import.meta.url)));
-      const after = PNG.sync.read(await page.screenshot({ animations: 'disabled' }));
+      const baseline = new URL(`../visual/${name}-${mode}.png`, import.meta.url);
+      const screenshot = await page.screenshot({ animations: 'disabled' });
+      // Explicit local opt-in for reviewed UI changes; CI never rewrites expectations.
+      if (!process.env.CI && process.env.UPDATE_VIEWER_BASELINES === '1')
+        await fs.writeFile(baseline, screenshot);
+      const before = PNG.sync.read(await fs.readFile(baseline));
+      const after = PNG.sync.read(screenshot);
       const diff = new PNG({ width: before.width, height: before.height });
       const changed = pixelmatch(before.data, after.data, diff.data, before.width, before.height, { threshold: 0.1 });
       await testInfo.attach(`${name}-${mode}-difference`, { body: PNG.sync.write(diff), contentType: 'image/png' });

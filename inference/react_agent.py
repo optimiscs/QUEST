@@ -18,8 +18,8 @@ from qwen_agent.llm.schema import Message
 from qwen_agent.utils.utils import build_text_completion_prompt
 from openai import OpenAI, APIError, APIConnectionError, APITimeoutError
 from inference.session_telemetry import measured_completion, context_capacity
-from inference.final_answer import recognize_benchmark_answer
-from inference import search_vector_client
+from inference.final_answer import browsecomp_exact_fields, recognize_benchmark_answer
+from inference import search_vector_client, source_ids
 from transformers import AutoTokenizer
 from datetime import datetime, date
 from qwen_agent.agents.fncall_agent import FnCallAgent
@@ -907,7 +907,9 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             }
             
             print(f"[Memory] Directly calling condenser tool (CONTEXT_THRESHOLD trigger)")
-            result = condenser_tool.call(params)
+            # The complete context already crossed the threshold; excluding
+            # recent turns must not cancel that trigger on the smaller subset.
+            result = condenser_tool.call(params, _context_threshold_triggered=True)
             
             # Print the raw summary output
             print(f"[Memory] Condenser output (raw):")
@@ -923,6 +925,8 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             # Parse the returned JSON state
             new_state = self._parse_memory_result(result)
             if new_state:
+                if source_ids.enabled():
+                    source_ids.SourceRegistry(tl.task_log_dir).assistant(new_state)
                 tl.memory_state = new_state
                 print(f"[Memory] State updated successfully from direct condenser call")
                 # Print the parsed state JSON
@@ -1144,6 +1148,11 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                     max_tokens=max_tokens,
                     presence_penalty=self.llm_generate_cfg.get('presence_penalty', 1.1)
                 )
+                if source_ids.enabled():
+                    registry = source_ids.SourceRegistry(tl.task_log_dir)
+                    visible = registry.context({k: request_kwargs[k] for k in ('messages', 'tools')
+                                                if k in request_kwargs}, 'policy')
+                    request_kwargs.update(visible)
                 if completion_call:
                     chat_response, ttft_seconds = completion_call(client, **request_kwargs)
                 else:
@@ -1328,6 +1337,8 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             tl.task_log_dir = os.path.join(self.base_log_dir, task_dir_name)
         
         Path(tl.task_log_dir).mkdir(parents=True, exist_ok=True)
+        if source_ids.enabled():
+            source_ids.bind_task(tl.task_log_dir)
         
         if rollout_idx is not None:
             print(f"[Memory] Task log directory created: {tl.task_log_dir} (filename: {filename or 'N/A'}, task_id: {task_id or 'N/A'}, rollout_idx: {rollout_idx})")
@@ -1435,9 +1446,16 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
 
         def finalize(reason):
             remaining = max(0, MAX_LLM_CALL_PER_RUN - round)
+            exact_profile = os.getenv('QUEST_FINAL_ANSWER_PROFILE', '').lower() == 'browsecomp_exact'
             prompt = ('Research is complete. Do not call tools. Using only the evidence already obtained, '
                       'return a JSON object with an answer string in the requested format. '
                       'If evidence is insufficient, use "Unknown".')
+            if exact_profile:
+                prompt = ('Research is complete. Do not call tools. Using only the evidence already obtained, '
+                          'return a JSON object whose answer string has exactly three labeled lines: '
+                          'Explanation: ..., Exact Answer: ..., and Confidence: ...%. Put all requested '
+                          'substantive fields and requested source IDs on the Exact Answer line; use Unknown '
+                          'for unsupported fields. Do not use answer tags inside the JSON string.')
             for index in range(min(3, remaining)):
                 user = {'role': 'user', 'content': prompt}
                 messages.append(user); tl.full_messages.append(copy.deepcopy(user))
@@ -1454,11 +1472,23 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                         raise ValueError('invalid answer field')
                     if getattr(response, 'finish_reason', None) == 'length':
                         raise ValueError('truncated final output')
-                except (ValueError, KeyError, TypeError):
-                    prompt = 'The previous output was invalid. Return only a JSON object with a nonempty answer string.'
+                    if source_ids.enabled():
+                        value = source_ids.SourceRegistry(tl.task_log_dir).validate_final(value)
+                    exact = browsecomp_exact_fields(value) if exact_profile else None
+                    if exact_profile and not exact:
+                        raise ValueError('missing or ambiguous Exact Answer line')
+                except (ValueError, KeyError, TypeError) as exc:
+                    prompt = ('The previous output was invalid (' + str(exc) + '). '
+                              'Return only a JSON object with a nonempty answer string. '
+                              'Use only source IDs backed by tool observations; do not invent references. '
+                              'If the evidence cannot support the requested answer, state the limitation.')
+                    if exact_profile:
+                        prompt += (' The answer string must contain exactly three labeled lines: '
+                                   'Explanation: ..., Exact Answer: ..., and Confidence: ...%. '
+                                   'Include every requested field in Exact Answer and use Unknown if unsupported.')
                     continue
-                prediction = value.strip()
-                wrapped = {'role': 'assistant', 'content': '<answer>' + prediction + '</answer>'}
+                prediction = exact.answer if exact_profile else value.strip()
+                wrapped = {'role': 'assistant', 'content': '<answer>' + (value.strip() if exact_profile else prediction) + '</answer>'}
                 messages.append(wrapped); tl.full_messages.append(copy.deepcopy(wrapped))
                 return prediction, 'generate an answer as ' + reason
             return 'answer not found.', 'answer not found.'
@@ -1540,6 +1570,20 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
             
             action_calls = (assistant_msg.get('tool_calls', []) if native_tools.enabled()
                             else visible_tool_calls(content))
+            if source_ids.enabled() and native_tools.enabled():
+                try:
+                    source_ids.SourceRegistry(tl.task_log_dir).assistant(assistant_msg)
+                except ValueError as exc:
+                    feedback = 'Source constraint: ' + str(exc) + '. Search for evidence first; do not invent URLs or source IDs.'
+                    if action_calls:
+                        corrections = [{'role': 'tool', 'tool_call_id': c['id'], 'content': feedback} for c in action_calls]
+                    else:
+                        corrections = [{'role': 'user', 'content': feedback}]
+                    messages.extend(corrections)
+                    tl.full_messages.extend(copy.deepcopy(corrections))
+                    if num_llm_calls_available <= 0:
+                        return finalized_result('source_validation_limit')
+                    continue
             if native_tools.enabled() and action_calls:
                 for tool_message in native_tools.execute_calls(
                         content, native_tools.tool_schemas(TOOL_MAP), self.custom_call_tool):
@@ -1591,6 +1635,10 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 has_tool_calls=bool(action_calls) or bool(visible_tool_calls(str(content or ''))))
             if benchmark_answer:
                 return recognized_result(benchmark_answer)
+            if (answer_profile == 'browsecomp_exact' and not action_calls
+                    and getattr(content, 'finish_reason', None) == 'stop'
+                    and extract_non_thinking_answer(content)):
+                return finalized_result('invalid_browsecomp_format')
 
             # Trigger 2: CONTEXT_THRESHOLD - When the token count reaches the dynamic threshold, call condenser directly
             # Check after completing the tool call and tool response, and use a flag to avoid repeated triggers(within the same round)
@@ -1837,6 +1885,13 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                 return "[Visit Error] URL cannot be empty."
 
         try:
+            # Preserve the model's original arguments in trajectories and audits.
+            tool_args = copy.deepcopy(tool_args)
+            registry = None
+            if source_ids.enabled() and tool_name in ('search', 'visit'):
+                registry = source_ids.SourceRegistry(self._get_thread_state().task_log_dir)
+                if tool_name == 'visit':
+                    tool_args['url'] = registry.resolve(tool_args['url'])
             vector_base = os.getenv('QUEST_SEARCH_VECTOR_URL', '').strip()
             local_results = []
             if tool_name == 'search' and vector_base:
@@ -1862,6 +1917,18 @@ IMPORTANT: This state summary is maintained automatically. You can reference it 
                     print(f'[Search vector] Index failed: {type(exc).__name__}', flush=True)
                 if local_results:
                     result += '\n\n' + '\n\n'.join(local_results)
+            if registry is not None and tool_name == 'search' and isinstance(result, str):
+                result = registry.render(result)
+            if registry is not None and tool_name == 'visit':
+                registry.audit('visit_return', dispatched_urls=tool_args['url'],
+                               response=str(result))
+                # A successful page response is evidence for the dispatched
+                # sources; failed fetches must not certify user-provided URLs.
+                text = str(result)
+                urls = tool_args['url'] if isinstance(tool_args['url'], list) else [tool_args['url']]
+                good = len(text.strip()) >= 100 and not text.lstrip().startswith(('[Tool Error]', '[Visit] Error', '[Visit] Failed'))
+                result = registry.compact(result, exact_urls=urls if good else (),
+                                          origin='page_observation' if good else 'failed_visit')
             return result
         except Exception as e:
             return f"[Tool Error] {str(e)}"

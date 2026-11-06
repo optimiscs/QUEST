@@ -62,7 +62,7 @@ def read_events(path):
    except json.JSONDecodeError:pass
  return rows
 def txt(v):return v if isinstance(v,str) else json.dumps(v,ensure_ascii=False,default=str)
-case_ids=sorted(case for case in status['cases'] if re.fullmatch(r'row\d+',case))[:cli.requested_cases]
+case_ids=sorted(case for case in status['cases'] if re.fullmatch(r'(?:row|obj)\d+',case))[:cli.requested_cases]
 for case in case_ids:
  i=int(case[3:]);state=dict(status['cases'].get(case,{}))
  retry=retries.get((root.name,case))

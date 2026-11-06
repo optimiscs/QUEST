@@ -3,6 +3,7 @@ import time
 from functools import lru_cache
 
 from openai.lib.streaming.chat import ChatCompletionStreamState
+from openai.types.chat.chat_completion import ChoiceLogprobs
 
 
 @lru_cache(maxsize=64)
@@ -32,6 +33,7 @@ def measured_completion(client, **kwargs):
     start = time.monotonic()
     first = None
     accumulator = ChatCompletionStreamState()
+    logprobs = {}
     stream = client.chat.completions.create(**kwargs, stream=True,
                                             stream_options={"include_usage": True})
     try:
@@ -43,11 +45,28 @@ def measured_completion(client, **kwargs):
                             or getattr(delta, 'reasoning', None) or getattr(delta, 'tool_calls', None)):
                         first = time.monotonic() - start
                         break
-            accumulator.handle_chunk(chunk)
+            # The SDK emits a logprobs event containing the entire growing
+            # history on every delta. Constructing those unused events makes
+            # long streams quadratic (especially under the observer profiler).
+            # Preserve the probabilities separately and attach them once.
+            choices = []
+            for choice in chunk.choices:
+                if choice.logprobs is not None:
+                    saved = logprobs.setdefault(choice.index, {})
+                    for key in ('content', 'refusal'):
+                        values = getattr(choice.logprobs, key, None)
+                        if values is not None:
+                            saved.setdefault(key, []).extend(values)
+                    choice = choice.model_copy(update={'logprobs': None})
+                choices.append(choice)
+            accumulator.handle_chunk(chunk.model_copy(update={'choices': choices}))
         # get_final_completion() invokes SDK parsing and raises on a length
         # finish; the agent must receive truncated tool calls unchanged so it
         # can apply its own validation and recovery policy.
         result = accumulator.current_completion_snapshot
+        for choice in result.choices:
+            if choice.index in logprobs:
+                choice.logprobs = ChoiceLogprobs(**logprobs[choice.index])
     finally:
         stream.close()
     return result, first

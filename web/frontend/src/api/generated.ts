@@ -160,6 +160,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/traces/{trace_id}/tool-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Trace Tool Events
+         * @description Compact tool outcomes; unchanged polling never reloads the large body.
+         */
+        get: operations["trace_tool_events_api_v1_runs__run_id__traces__trace_id__tool_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runs/{run_id}/export": {
         parameters: {
             query?: never;
@@ -511,6 +531,38 @@ export interface operations {
         };
     };
     session_stats_api_v1_runs__run_id__traces__trace_id__session_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                trace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trace_tool_events_api_v1_runs__run_id__traces__trace_id__tool_events_get: {
         parameters: {
             query?: never;
             header?: never;

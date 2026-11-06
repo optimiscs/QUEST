@@ -1,8 +1,27 @@
 """Fail before evaluation if a configured Python executor cannot run code."""
+import fcntl
+import os
+import time
 from sandbox_fusion import RunCodeRequest, run_code
 
 
 def check_sandbox_endpoints(endpoints):
+    if os.environ.get('QUEST_SERIALIZE_SANDBOX_PREFLIGHT') == '1':
+        # The sandbox may reject concurrent cold-start probes; serialize only
+        # this optional health check, never the agent's real Python tool calls.
+        with open('/tmp/quest-sandbox-preflight.lock', 'a+') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            for attempt in range(3):
+                try:
+                    return _check_sandbox_endpoints(endpoints)
+                except RuntimeError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(1)
+    return _check_sandbox_endpoints(endpoints)
+
+
+def _check_sandbox_endpoints(endpoints):
     if not endpoints:
         raise RuntimeError('Python tool is enabled but no sandbox endpoint is configured')
     for endpoint in endpoints:

@@ -625,10 +625,13 @@ class Visit(BaseTool):
         if audit['delivery'] == 'summary':
             audit['flash_thinking'] = 'disabled'
         audit_path = os.getenv('VISIT_EXPERIMENT_AUDIT')
+        if not audit_path and os.getenv('TASK_LOG_DIR'):
+            audit_path = os.path.join(os.environ['TASK_LOG_DIR'], 'visit-retrieval.jsonl')
         if audit_path:
             audit['original_content'] = content
             audit['selected_content'] = selected
             with self._audit_lock:
+                os.makedirs(os.path.dirname(os.path.abspath(audit_path)), exist_ok=True)
                 with open(audit_path, 'a', encoding='utf-8') as handle:
                     handle.write(json.dumps(audit, ensure_ascii=False) + '\n')
         return selected, audit['delivery'] == 'direct'
@@ -740,7 +743,7 @@ class Visit(BaseTool):
                 try:
                     client = OpenAI(
                         api_key="EMPTY",
-                        base_url=choose_local_openai_base_url(),
+                        base_url=os.environ.get('VISIT_LOCAL_API_BASE') or choose_local_openai_base_url(),
                         timeout=600.0,
                     )
                     options = {}

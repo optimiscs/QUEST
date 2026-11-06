@@ -8,3 +8,10 @@ inference/cache/
 
 # Local runtime artifacts and compatibility links (never commit data or credentials).
 /workspace/
+
+# Local databases, generated evaluation samples and personal notes.
+*.db
+*.db-shm
+*.db-wal
+/evaluation/drbench/eval/deep_research_bench/data/test_data/cleaned_data/
+/简历_*.md

@@ -14,6 +14,7 @@ from prompt import (
     use_memory_local_prompt,
 )
 from openai import OpenAI
+from inference import source_ids
 
 
 # System prompt for memory tool
@@ -367,6 +368,7 @@ class Memory(BaseTool):
                     {"role": "system", "content": MEMORY_LOCAL_SYSTEM_PROMPT},
                 ] + full_messages
 
+            full_messages = source_ids.compact_memory(full_messages)
             last_error = None
             for attempt in range(max_retries):
                 try:
@@ -411,6 +413,7 @@ class Memory(BaseTool):
                 })
             full_messages = system_messages + full_messages
         
+        full_messages = source_ids.compact_memory(full_messages)
         # Prepare litellm call arguments
         call_kwargs = {
             "model": model_name,
@@ -708,7 +711,9 @@ IMPORTANT: If no state changes are warranted, return prev_state unchanged."""
             }]
             
             # Check the token threshold
-            if not kwargs.get('_memory_batch') and self.token_threshold is not None and self.tokenizer is not None:
+            if (not kwargs.get('_memory_batch')
+                    and not kwargs.get('_context_threshold_triggered')
+                    and self.token_threshold is not None and self.tokenizer is not None):
                 token_count = self.count_tokens(formatted_content)
                 if token_count <= self.token_threshold:
                     print(f"[Memory] Token count ({token_count}) <= threshold ({self.token_threshold}), skipping LLM call")

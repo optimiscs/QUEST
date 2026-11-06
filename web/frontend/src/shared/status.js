@@ -1,5 +1,13 @@
 export function createStatus(state) {
   function caseState(caseData) {
+    const evalStatus = caseData.evaluationStatus;
+    if (evalStatus === "training_sample") return { key: "scored", label: "训练样本 · 未评分" };
+    if (evalStatus === "user_terminated") return { key: "error", label: "人为终止 · 失败" };
+    if (evalStatus === "round_limit") return { key: "error", label: "达到轮数上限" };
+    if (evalStatus === "tool_error") return { key: "error", label: "工具中断" };
+    if (evalStatus === "inference_error") return { key: "error", label: "推理错误" };
+    if (evalStatus === "judge_error") return { key: "error", label: "判题错误" };
+    if (evalStatus === "judging") return { key: "error", label: "等待判题" };
     if (caseData.interrupted) return { key: "stopped", label: "已中断" };
     if (caseData.inProgress && (state.data.run?.stopped || state.datasetMeta?.lifecycleOverride === "stopped")) return { key: "stopped", label: "已终止" };
     if (caseData.inProgress) return { key: "running", label: "进行中" };
@@ -12,7 +20,7 @@ export function createStatus(state) {
   function caseStateDetail(caseData) {
     const status = caseState(caseData);
     if (status.key === "error") {
-      return "未评分或评分不可用";
+      return caseData.evaluationError || status.label;
     }
     return status.label;
   }

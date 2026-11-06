@@ -59,3 +59,11 @@ def test_benchmark_is_opt_in_and_requires_completed_no_tool_response():
     assert recognize('<answer>A</answer>', has_tool_calls=True) is None
     with pytest.raises(ValueError, match='Unknown final answer profile'):
         recognize_benchmark_answer(text, 'unknown', finish_reason='stop', has_tool_calls=False)
+
+
+def test_browsecomp_exact_profile_extracts_line_inside_answer_tags():
+    text = '<answer>Explanation: Two facts.\nExact Answer: A; B\nConfidence: 80%</answer>'
+    result = recognize_benchmark_answer(text, 'browsecomp_exact', finish_reason='stop', has_tool_calls=False)
+    assert result.answer == 'A; B'
+    assert recognize_benchmark_answer('<answer>long report</answer>', 'browsecomp_exact', finish_reason='stop', has_tool_calls=False) is None
+    assert recognize_benchmark_answer(text, 'browsecomp_exact', finish_reason='length', has_tool_calls=False) is None

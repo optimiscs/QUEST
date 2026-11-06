@@ -27,6 +27,7 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
     taskFilter: "all",
     workspaceStats: {},
     workspaceStatsKey: "",
+    traceLanguage: "zh",
   };
 
   const { caseState, caseStateDetail, hasGroundTruth, runLifecycleState, statusLabel, riskInfo } = createStatus(state);
@@ -188,7 +189,7 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
   function toolSub(step) {
     if (step.kind === "search") {
       const queries = step.tool?.queries || [];
-      return `${queries.length} 次查询 · ${number(step.tool?.resultCount || 0)} 条结果`;
+      return `${queries.length} 次查询 · ${step.tool?.error || step.tool?.status === "error" ? "搜索失败" : step.tool?.status === "pending" ? "等待返回" : number(step.tool?.resultCount || 0) + " 条结果"}`;
     }
     if (step.kind === "read") {
       const pages = step.tool?.pages || [];
@@ -461,7 +462,7 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
     if (dom.dockModel) dom.dockModel.textContent = run.model || "QUEST-4B";
     if (dom.tabDate) dom.tabDate.textContent = run.dateShort || run.date || "—";
     if (dom.footerSource) dom.footerSource.textContent = `${run.model || "Agent"} · ${run.benchmark || "Evaluation"} · ${run.dateShort || run.date || "—"}`;
-    if (dom.footerFine) dom.footerFine.textContent = `${run.judgePassed ?? "—"} / ${run.judgeScored ?? run.totalCases ?? "—"} judge accepted · one rollout per task · judge acceptance ≠ accuracy.`;
+    if (dom.footerFine) dom.footerFine.textContent = `${run.judgePassed ?? "—"} / ${run.judgeScored ?? run.totalCases ?? "—"} 已评分通过 · 异常 ${run.errorCount ?? "—"} · 轮数耗尽 ${run.roundLimitCount ?? "—"}`;
   }
 
   function renderSidebarSummary() {
@@ -473,8 +474,36 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
     dom.summaryTools.textContent = String(run.toolCalls);
   }
 
+  const bilingualSnapshots = new WeakMap();
+  function applyTraceLanguage(c) {
+    const switcher = $("#sftLanguageSwitch");
+    const available = typeof c?.questionOriginal === "string" && c.steps.some(step => typeof step.thoughtOriginal === "string");
+    switcher.hidden = !available;
+    if (!available) return;
+    if (!bilingualSnapshots.has(c)) bilingualSnapshots.set(c, {
+      question: c.question, answer: c.answer, finalAnswer: c.finalAnswer,
+      thoughts: c.steps.map(step => step.thought),
+    });
+    const original = state.traceLanguage === "en";
+    const snapshot = bilingualSnapshots.get(c);
+    for (const key of ["question", "answer", "finalAnswer"]) c[key] = original ? c[`${key}Original`] : snapshot[key];
+    c.steps.forEach((step, i) => { step.thought = original ? step.thoughtOriginal : snapshot.thoughts[i]; });
+    switcher.querySelectorAll("[data-trace-language]").forEach(button => {
+      const selected = button.dataset.traceLanguage === state.traceLanguage;
+      button.classList.toggle("is-active", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    });
+  }
+  $("#sftLanguageSwitch").addEventListener("click", event => {
+    const button = event.target.closest("[data-trace-language]");
+    if (!button) return;
+    state.traceLanguage = button.dataset.traceLanguage;
+    renderAllContent();
+  });
+
   function renderAllContent() {
     if (!state.data) return;
+    applyTraceLanguage(activeCase());
     renderTabs();
     renderTabMeta();
     renderContext();
