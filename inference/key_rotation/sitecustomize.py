@@ -108,6 +108,7 @@ if os.environ.get('QUEST_KEY_ROTATION') == '1' and os.environ.get('QUEST_KEY_ROT
                 guard = getattr(guard_module.local, 'current', None) if guard_module else None
                 if guard is not None:
                     guard.before()
+            record('jina', 'request_attempt', index, None)
             response = original_request(self, method, url, **opts)
             record('jina', 'response', index, response.status_code)
             if not switchable(response.status_code, response.text): return response
@@ -135,6 +136,7 @@ if os.environ.get('QUEST_KEY_ROTATION') == '1' and os.environ.get('QUEST_KEY_ROT
         index, key = selected
         clean = {k: v for k, v in (headers or {}).items() if k.lower() != 'x-api-key'}
         conn._quest_serper = (method, url, body, clean, encode_chunked, index, {index})
+        record('serper', 'request_attempt', index, None)
         return original_https_request(conn, method, url, body, dict(clean, **{'X-API-KEY': key}), encode_chunked=encode_chunked)
 
     def serper_response(conn):
@@ -163,6 +165,7 @@ if os.environ.get('QUEST_KEY_ROTATION') == '1' and os.environ.get('QUEST_KEY_ROT
             index, key = selected
             attempted.add(index)
             conn.close()
+            record('serper', 'request_attempt', index, None)
             original_https_request(conn, method, url, body, dict(clean, **{'X-API-KEY': key}), encode_chunked=chunked)
             response = original_getresponse(conn)
     http.client.HTTPSConnection.request = serper_request

@@ -22,6 +22,11 @@ def tool_schemas(tool_map):
         if name == 'visit':
             parameters['properties']['url']['type'] = 'array'
             parameters['properties']['url']['description'] = 'URLs to read, including for a single page.'
+            from inference import source_ids
+            if source_ids.enabled():
+                parameters['properties']['url']['description'] = (
+                    'Source IDs returned by search (e.g. ["S123"]), or URLs already supplied by the user or tools. '
+                    'Prefer the exact source IDs from search. Always provide an array.')
         Draft202012Validator.check_schema(parameters)
         schemas.append({'type': 'function', 'function': {
             'name': name, 'description': tool.description,
@@ -43,6 +48,12 @@ def system_prompt(prompt, visit_disabled=False):
     )
     if visit_disabled:
         instruction += 'The visit tool is unavailable; gather evidence with search.\n'
+    from inference import source_ids
+    if source_ids.enabled() and not visit_disabled:
+        instruction += ('Search links use persistent source IDs such as S123. '
+                        'Never invent source IDs or URLs. Cite only sources supported by tool observations. '
+                        'Pass these IDs directly in visit.url; the program resolves their full URLs. '
+                        'Never invent a source ID.\n')
     return instruction + prompt
 
 
@@ -84,6 +95,25 @@ def prepare_messages(messages, *, for_template=False):
     """
     result = copy.deepcopy(messages)
     for message in result:
+        # Qwen's native template reads reasoning_content separately. Feeding our
+        # archival <think> wrapper as content otherwise emits an empty think
+        # block followed by a second literal block in both training and replay.
+        if message.get('role') == 'assistant' and not message.get('reasoning_content'):
+            content = message.get('content')
+            if isinstance(content, str):
+                # Some released tool turns contain only an orphan thinking
+                # delimiter before an otherwise complete native call. It is
+                # transport syntax, not reasoning or answer text.
+                if message.get('tool_calls') and content.strip() in {'<think>', '</think>'}:
+                    message['content'] = content = ''
+                split = re.fullmatch(r'\s*<think>\s*(.*?)\s*</think>\s*(.*)', content, re.S)
+                if split:
+                    message['reasoning_content'] = split[1]
+                    message['content'] = split[2]
+        if message.get('role') == 'assistant' and isinstance(message.get('reasoning_content'), str):
+            # vLLM's request parser consumes `reasoning`; HF's Qwen template
+            # consumes `reasoning_content`. Keep both transports lossless.
+            message['reasoning'] = message['reasoning_content']
         for call in message.get('tool_calls', []):
             raw = call['function']['arguments']
             try:
