@@ -20,8 +20,9 @@ export function createTimeline(context) {
     const safeTotal = Math.max(1, total);
     const left = Math.min(99.6, Math.max(0, (Number(start || 0) / safeTotal) * 100));
     const width = Math.min(100 - left, Math.max(0.45, (Number(duration || 0) / safeTotal) * 100));
-    const title = `第 ${step.n} 轮 · ${type === "model" ? (step.modelTimingKind === "finalization" ? "最终回答生成（含重试）" : "模型") : step.label} · ${formatSeconds(duration)} · ${formatAxis(start)}`;
-    return `<button type="button" class="chart-bar ${type}" data-chart-step="${step.n}" data-chart-role="${role}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}"></button>`;
+    const failed = type !== "model" && step.toolOutcome?.status === "failed";
+    const title = `第 ${step.n} 轮 · ${type === "model" ? (step.modelTimingKind === "finalization" ? "最终回答生成（含重试）" : "模型") : step.label} · ${formatSeconds(duration)} · ${formatAxis(start)}${failed ? " · 工具失败：" + step.toolOutcome.error : ""}`;
+    return `<button type="button" class="chart-bar ${type}${failed ? " tool-failed" : ""}" data-chart-step="${step.n}" data-chart-role="${role}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}"></button>`;
   }
 
   function axisHTML(total) {
@@ -56,11 +57,12 @@ export function createTimeline(context) {
     const readLane = laneHTML("读取 / 计算", "read", [...readBars, ...computeBars]);
     dom.chartTitle.textContent = "执行时间线";
     const partial = timing.models.length < timing.modelExpected || timing.tools.length < timing.toolExpected;
-    dom.chartSub.textContent = `${formatDuration(total)} · ${partial ? "部分耗时缺失，仅显示已记录部分" : "真实调用跨度"}`;
+    dom.chartSub.textContent = `${formatDuration(total)} · ${c.timing?.includesPauses ? "自首次启动起，含暂停间隔 · " : ""}${partial ? "部分耗时缺失，仅显示已记录部分" : "真实调用跨度"}`;
     dom.chartLegend.innerHTML = [
       ["model", "模型"],
       ["search", "搜索"],
       ["read", "读取"],
+      ["tool-failed", "工具失败"],
       c.stats.computeCalls ? ["compute", "计算"] : null,
     ]
       .filter(Boolean)
@@ -72,8 +74,9 @@ export function createTimeline(context) {
   function renderRoundsChart(c) {
     const cells = c.steps
       .map((step) => {
-        const kind = step.kind === "answer" ? "answer" : step.kind;
-        const label = `第 ${step.n} 轮 · ${step.label} · ${formatSeconds(step.model_seconds == null || step.tool_seconds == null ? null : step.model_seconds + step.tool_seconds)}`;
+        const failed = step.toolOutcome?.status === "failed";
+        const kind = (step.kind === "answer" ? "answer" : step.kind) + (failed ? " tool-failed" : "");
+        const label = `第 ${step.n} 轮 · ${step.label} · ${formatSeconds(step.model_seconds == null || step.tool_seconds == null ? null : step.model_seconds + step.tool_seconds)}${failed ? " · 工具失败：" + step.toolOutcome.error : ""}`;
         return `<button type="button" class="round-cell ${kind}" data-chart-step="${step.n}" data-chart-role="assistant" title="${escapeAttr(label)}" aria-label="${escapeAttr(label)}"></button>`;
       })
       .join("");
@@ -82,8 +85,10 @@ export function createTimeline(context) {
     dom.chartLegend.innerHTML = [
       ["search", "搜索"],
       ["read", "读取"],
+      ["tool-failed", "工具失败"],
       ["compute", "计算"],
       ["answer", "综合"],
+      ["tool-failed", "工具失败"],
     ]
       .filter(([type]) => type !== "compute" || c.stats.computeCalls)
       .map(([type, label]) => `<span><i class="legend-dot ${type}"></i>${label}</span>`)
@@ -121,6 +126,7 @@ export function createTimeline(context) {
       ["search", `搜索 ${c.stats.searchCalls}`],
       ["read", `读取 ${c.stats.readCalls}`],
       ["compute", `计算 ${c.stats.computeCalls}`],
+      ["tool-failed", "工具失败"],
     ]
       .map(([type, label]) => `<span><i class="legend-dot ${type}"></i>${label}</span>`)
       .join("");

@@ -66,7 +66,12 @@ def test_summary_detail_cache_export(env):
     assert second["items"][0]["id"] == "trace-02"
     assert second["nextCursor"] is None
     detail = client.get(base + "/traces/trace-245")
-    assert detail.json() == package["cases"][0]
+    displayed = detail.json()
+    outcome = displayed["steps"][0].pop("toolOutcome")
+    assert outcome == {"status": "unknown", "reasons": [], "error": "", "zeroResults": False}
+    assert displayed == package["cases"][0]
+    assert detail.headers["X-Trace-Revision"] == first["items"][0]["revision"]
+    assert detail.headers["etag"].startswith('"trace-view-v1-tool-health-v2-')
     stats = client.get(base + "/traces/trace-245/session-stats")
     assert stats.status_code == 200
     assert stats.json()["sessionStats"] == {}

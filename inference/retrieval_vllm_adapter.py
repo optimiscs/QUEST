@@ -1,6 +1,7 @@
 """Preserve QUEST's scoring API while vLLM serves the pooling models."""
 import argparse
 import math
+import os
 
 import requests
 import uvicorn
@@ -36,7 +37,7 @@ def create_app(role, model, upstream, tokenizer=None):
         try:
             if role == 'embedding':
                 inputs = [f'Instruct: {TASK}\nQuery:{request.goal}'] + request.passages
-                response = requests.post(upstream+'/v1/embeddings', json={'model': model, 'input': inputs, 'truncate_prompt_tokens': 2048}, timeout=(10, 7200))
+                response = requests.post(upstream+'/v1/embeddings', json={'model': model, 'input': inputs, 'truncate_prompt_tokens': 2048}, timeout=(10, float(os.getenv('VISIT_RETRIEVAL_HTTP_TIMEOUT', '7200'))))
                 response.raise_for_status()
                 rows = sorted(response.json()['data'], key=lambda row: row['index'])
                 vectors = [row['embedding'] for row in rows]
@@ -63,7 +64,7 @@ def create_app(role, model, upstream, tokenizer=None):
                     budget = max(1, 2048 - len(tokenizer.encode(envelope, add_special_tokens=False)) - 16)
                 else:
                     budget = 1500
-                response = requests.post(upstream+'/score', json={'model': model, 'queries': [goal], 'documents': request.passages, 'max_tokens_per_doc': budget, 'truncate_prompt_tokens': 2048}, timeout=(10, 7200))
+                response = requests.post(upstream+'/score', json={'model': model, 'queries': [goal], 'documents': request.passages, 'max_tokens_per_doc': budget, 'truncate_prompt_tokens': 2048}, timeout=(10, float(os.getenv('VISIT_RETRIEVAL_HTTP_TIMEOUT', '7200'))))
                 response.raise_for_status()
                 rows = sorted(response.json()['data'], key=lambda row: row['index'])
                 scores = [row['score'] for row in rows]

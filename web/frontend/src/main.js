@@ -39,6 +39,7 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
   const dom = {
     app: $("#app"),
     sidebar: $("#sidebar"),
+    sidebarResizer: $("#sidebarResizer"),
     sidebarBackdrop: $("#sidebarBackdrop"),
     sidebarToggle: $("#sidebarToggle"),
     sidebarClose: $("#sidebarClose"),
@@ -261,7 +262,7 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
 
 
   const siteLocale = /(?:^|\/)trace-viewer-zh(?:\/|$)/.test(window.location.pathname) ? "zh" : "en";
-  const { setupWorkspaceSwitcher, readWorkspaceLayout, saveWorkspaceLayout, defaultWorkspaceFolder, workspaceFolderTitle, workspaceDatasetLabel, workspaceStatsFor, workspaceMetricsHTML, workspaceGroupPassHTML, workspaceDatasetRow, renderDatasetOptions, closeWorkspaceActionMenu, openWorkspaceActionMenu, toggleWorkspaceFolder, startInlineRename, beginCreateFolder, updateWorkspaceLinks, loadWorkspaceManifest, refreshWorkspaceStats, fitWorkspaceMenu, openWorkspaceMenu, closeWorkspaceMenu, toggleWorkspaceMenu } = createWorkspaces({ state, dom, $, $$, icon, escapeHTML, escapeAttr, nowHash, runLifecycleState, showToast, getJSON, siteLocale });
+  const { deleteWorkspace, restoreWorkspace, leaveDeletedWorkspace, setupWorkspaceSwitcher, readWorkspaceLayout, saveWorkspaceLayout, defaultWorkspaceFolder, workspaceFolderTitle, workspaceDatasetLabel, workspaceStatsFor, workspaceMetricsHTML, workspaceGroupPassHTML, workspaceDatasetRow, renderDatasetOptions, closeWorkspaceActionMenu, openWorkspaceActionMenu, toggleWorkspaceFolder, startInlineRename, beginCreateFolder, updateWorkspaceLinks, loadWorkspaceManifest, refreshWorkspaceStats, fitWorkspaceMenu, openWorkspaceMenu, closeWorkspaceMenu, toggleWorkspaceMenu } = createWorkspaces({ state, dom, $, $$, icon, escapeHTML, escapeAttr, nowHash, runLifecycleState, showToast, getJSON, siteLocale });
 
   /* ---------- chrome and navigation ---------- */
 
@@ -716,7 +717,77 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
 
   /* ---------- events ---------- */
 
+  function setupSidebarResize() {
+    const handle = dom.sidebarResizer;
+    const storageKey = "quest.trace.sidebar-width.v1";
+    const minimum = 220;
+    const maximum = () => Math.max(minimum, Math.min(640, window.innerWidth - 400));
+    let preferredWidth = null;
+    let drag = null;
+    try {
+      const stored = window.localStorage.getItem(storageKey);
+      if (stored !== null && Number.isFinite(Number(stored)) && Number(stored) > 0) preferredWidth = Number(stored);
+    } catch (_) { /* Resizing remains available when storage is disabled. */ }
+
+    function apply(width, persist = false) {
+      preferredWidth = Math.round(Math.max(minimum, Math.min(maximum(), width)));
+      dom.app.style.setProperty("--sidebar-width", `${preferredWidth}px`);
+      handle.setAttribute("aria-valuenow", String(preferredWidth));
+      handle.setAttribute("aria-valuemax", String(maximum()));
+      if (persist) {
+        try { window.localStorage.setItem(storageKey, String(preferredWidth)); } catch (_) { /* optional */ }
+      }
+    }
+    if (preferredWidth !== null && !isMobile()) apply(preferredWidth);
+    else handle.setAttribute("aria-valuenow", String(Math.round(dom.sidebar.getBoundingClientRect().width)));
+
+    handle.addEventListener("pointerdown", (event) => {
+      if (isMobile() || event.button !== 0) return;
+      event.preventDefault();
+      handle.setPointerCapture(event.pointerId);
+      drag = { startX: event.clientX, startWidth: dom.sidebar.getBoundingClientRect().width, moved: false };
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (!drag || !handle.hasPointerCapture(event.pointerId)) return;
+      const distance = event.clientX - drag.startX;
+      if (!drag.moved && Math.abs(distance) < 2) return;
+      drag.moved = true;
+      dom.app.classList.add("is-sidebar-resizing");
+      apply(drag.startWidth + distance);
+    });
+    function finishResize(event) {
+      if (!handle.hasPointerCapture(event.pointerId)) return;
+      const moved = drag?.moved;
+      drag = null;
+      handle.releasePointerCapture(event.pointerId);
+      dom.app.classList.remove("is-sidebar-resizing");
+      if (moved && preferredWidth !== null) apply(preferredWidth, true);
+    }
+    handle.addEventListener("pointerup", finishResize);
+    handle.addEventListener("pointercancel", finishResize);
+    handle.addEventListener("lostpointercapture", () => { drag = null; dom.app.classList.remove("is-sidebar-resizing"); });
+    handle.addEventListener("keydown", (event) => {
+      if (isMobile()) return;
+      const width = dom.sidebar.getBoundingClientRect().width;
+      const next = event.key === "ArrowLeft" ? width - 10 : event.key === "ArrowRight" ? width + 10 : event.key === "Home" ? minimum : event.key === "End" ? maximum() : null;
+      if (next === null) return;
+      event.preventDefault();
+      apply(next, true);
+    });
+    handle.addEventListener("dblclick", () => {
+      preferredWidth = null;
+      dom.app.style.removeProperty("--sidebar-width");
+      try { window.localStorage.removeItem(storageKey); } catch (_) { /* optional */ }
+      handle.setAttribute("aria-valuenow", String(Math.round(dom.sidebar.getBoundingClientRect().width)));
+    });
+    window.addEventListener("resize", () => {
+      if (!isMobile() && preferredWidth !== null) apply(preferredWidth);
+      handle.setAttribute("aria-valuemax", String(maximum()));
+    });
+  }
+
   function bindEvents() {
+    setupSidebarResize();
     dom.sidebarToggle.addEventListener("click", toggleSidebar);
     dom.sidebarClose.addEventListener("click", closeSidebar);
     dom.sidebarBackdrop.addEventListener("click", closeSidebar);
@@ -727,6 +798,13 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
     });
 
     dom.workspaceMenu.addEventListener("click", (event) => {
+      const restore = event.target.closest("[data-workspace-restore]");
+      if (restore) {
+        event.preventDefault();
+        event.stopPropagation();
+        restoreWorkspace(restore.dataset.workspaceRestore);
+        return;
+      }
       const create = event.target.closest("[data-create-folder]");
       if (create) {
         event.preventDefault();
@@ -782,6 +860,7 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
       closeWorkspaceActionMenu();
       if (action === "rename") startInlineRename(kind, id);
       else if (action === "toggle") toggleWorkspaceFolder(id);
+      else if (action === "delete" && kind === "dataset") deleteWorkspace(id);
     });
 
     dom.datasetOptions.addEventListener("contextmenu", (event) => {
@@ -1063,6 +1142,7 @@ import { deriveSessionStats, compactTokens } from './features/session-stats';
     try {
       state.manifest = await loadWorkspaceManifest();
       const requested = new URLSearchParams(window.location.search).get('dataset');
+      if (leaveDeletedWorkspace(requested)) return;
       if (requested && !state.manifest.some(item => item.id === requested)) throw new Error('工作区不存在');
       state.datasetId = requested;
       state.runId = requested || `default-${siteLocale}`;

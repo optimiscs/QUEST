@@ -10,6 +10,8 @@ const storeKey = 'quest-tool-health-selection-v1';
 const selection = new Map();
 try { for (const item of JSON.parse(localStorage.getItem(storeKey) || '[]')) if (item?.run && item?.id) selection.set(eventKey(item.run,item.id),item); } catch { /* storage optional */ }
 const cache = new Map();
+const urlParams = new URLSearchParams(location.search);
+const followRun = urlParams.get('all') === '1' ? urlParams.get('dataset') : null;
 let runs = [], browse = [], browseVersion = 0, busy = false, rerun = false, timer, page = 0, reason = '', history = [], rows = [], details = [], lastLoaded = 0;
 function persist() { try { localStorage.setItem(storeKey, JSON.stringify([...selection.values()])); } catch { /* storage optional */ } }
 function label(run) { return runs.find(x => x.id === run)?.label || run; }
@@ -93,6 +95,11 @@ function schedule() { clearTimeout(timer); if ($('live').checked) timer=setTimeo
 async function refresh() {
   if (busy) { rerun=true;return; }
   busy=true;clearTimeout(timer);$('refresh').disabled=true;
+  if (followRun && $('dataset').value === followRun) {
+    await loadBrowse();
+    for (const t of browse) selection.set(eventKey(followRun,t.id),{run:followRun,id:t.id});
+    persist(); drawSelection();
+  }
   const selected=[...selection.entries()], errors=[];
   $('sync').textContent=`正在同步 ${selected.length} 条轨迹…`;
   let cursor=0,done=0;
@@ -126,5 +133,5 @@ $('reasons').onclick=e=>{const button=e.target.closest('[data-reason]');if(!butt
 $('status-filter').onchange=()=>{page=0;reason='';render();};$('reset-reason').onclick=()=>{reason='';page=0;render();};
 $('prev').onclick=()=>{page--;drawDetails();};$('next').onclick=()=>{page++;drawDetails();};
 $('download').onclick=()=>{const csvCell=x=>'"'+String(x??'').replace(/^[=+@-]/,"'$&").replaceAll('"','""')+'"';const data=[['数据集','轨迹','步骤','工具','状态','零结果','原因','查询','错误'],...details.map(e=>[e.run,e.trace,e.step,e.tool,statuses[e.status],e.zeroResults,e.reasons.join(' / '),(e.queries||[]).join('\n'),e.error])].map(row=>row.map(csvCell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob(['\ufeff'+data],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='tool-health.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-async function init(){try{runs=(await getJSON('/api/v1/runs')).data.datasets;$('dataset').innerHTML=runs.map(r=>`<option value="${esc(r.id)}">${esc(r.label||r.id)}</option>`).join('');const params=new URLSearchParams(location.search);const preferred=params.get('dataset')||'fair120-20261106-step39';if(runs.some(r=>r.id===preferred))$('dataset').value=preferred;await loadBrowse();if(params.get('trace')){const run=$('dataset').value,id=params.get('trace');selection.set(eventKey(run,id),{run,id});persist();}drawSelection();render();await refresh();}catch(e){$('error').hidden=false;$('error').textContent=e.message;}}
+async function init(){try{runs=(await getJSON('/api/v1/runs')).data.datasets;$('dataset').innerHTML=runs.map(r=>`<option value="${esc(r.id)}">${esc(r.label||r.id)}</option>`).join('');const params=new URLSearchParams(location.search);const preferred=params.get('dataset')||'fair120-20261106-step39';if(runs.some(r=>r.id===preferred))$('dataset').value=preferred;await loadBrowse();if(followRun){selection.clear();$('chart-mode').value='live';}if(params.get('trace')){const run=$('dataset').value,id=params.get('trace');selection.set(eventKey(run,id),{run,id});persist();}drawSelection();render();await refresh();}catch(e){$('error').hidden=false;$('error').textContent=e.message;}}
 init();
