@@ -61,8 +61,9 @@ export function createWorkspaces(context) {
         placements: raw.placements || {},
         names: raw.names || {},
         expanded: Array.isArray(raw.expanded) ? raw.expanded : [],
+        deleted: Array.isArray(raw.deleted) ? raw.deleted.filter((id) => typeof id === "string") : [],
       };
-    } catch (_) { return { folders: {}, placements: {}, names: {}, expanded: [] }; }
+    } catch (_) { return { folders: {}, placements: {}, names: {}, expanded: [], deleted: [] }; }
   }
 
   function saveWorkspaceLayout(layout) {
@@ -137,8 +138,10 @@ export function createWorkspaces(context) {
   function renderDatasetOptions() {
     closeWorkspaceActionMenu();
     if (!dom.datasetOptions || !dom.datasetMenuDivider) return;
-    const datasets = (state.manifest || []).filter((item) => item && item.id && item.visible !== false);
     const layout = readWorkspaceLayout();
+    const deleted = new Set(layout.deleted);
+    const available = (state.manifest || []).filter((item) => item && item.id && item.visible !== false);
+    const datasets = available.filter((item) => !deleted.has(item.id));
     const expandedIds = new Set(Array.isArray(layout.expanded) ? layout.expanded : []);
     const groupOrder = new Map();
     for (const item of datasets) {
@@ -181,6 +184,49 @@ export function createWorkspaces(context) {
         </section>`;
       })
       .join("");
+    const removed = available.filter((item) => deleted.has(item.id));
+    if (removed.length) {
+      dom.datasetOptions.insertAdjacentHTML("beforeend", `<details class="ws-deleted">
+        <summary>已删除工作区（${removed.length}）</summary>
+        <p>仅从当前浏览器列表移除，原始轨迹保留。</p>
+        ${removed.map((item) => `<div class="ws-deleted-row"><span>${escapeHTML(workspaceDatasetLabel(item, layout))}</span><button type="button" data-workspace-restore="${escapeAttr(item.id)}" aria-label="${escapeAttr(`恢复 ${workspaceDatasetLabel(item, layout)}`)}">恢复</button></div>`).join("")}
+      </details>`);
+    }
+  }
+
+  function leaveDeletedWorkspace(id) {
+    const layout = readWorkspaceLayout();
+    if (!id || !layout.deleted.includes(id)) return false;
+    const next = (state.manifest || []).find((item) => item?.id && item.visible !== false && !layout.deleted.includes(item.id));
+    const url = new URL(window.location.href);
+    if (next) url.searchParams.set("dataset", next.id);
+    else url.searchParams.delete("dataset");
+    url.hash = "";
+    window.location.replace(url.href);
+    return true;
+  }
+
+  function deleteWorkspace(id) {
+    if (!(state.manifest || []).some((item) => item.id === id)) return;
+    const layout = readWorkspaceLayout();
+    layout.deleted = [...new Set([...layout.deleted, id])];
+    if (!saveWorkspaceLayout(layout)) return;
+    closeWorkspaceActionMenu();
+    if (state.datasetId === id && leaveDeletedWorkspace(id)) return;
+    renderDatasetOptions();
+    showToast("工作区已删除，可在“已删除工作区”中恢复");
+    dom.workspaceTrigger?.focus();
+  }
+
+  function restoreWorkspace(id) {
+    const layout = readWorkspaceLayout();
+    layout.deleted = layout.deleted.filter((entry) => entry !== id);
+    const item = (state.manifest || []).find((entry) => entry.id === id);
+    if (item) layout.expanded = [...new Set([...layout.expanded, layout.placements[id] || defaultWorkspaceFolder(item)])];
+    if (!saveWorkspaceLayout(layout)) return;
+    renderDatasetOptions();
+    showToast("工作区已恢复");
+    dom.workspaceTrigger?.focus();
   }
 
   function closeWorkspaceActionMenu(restoreFocus = false) {
@@ -211,12 +257,13 @@ export function createWorkspaces(context) {
       actions = [
         { action: "open", icon: "arrow-up-right", label: "打开工作区" },
         { action: "rename", icon: "edit", label: "重命名" },
+        { action: "delete", icon: "trash", label: "删除工作区" },
       ];
     }
     dom.workspaceActionMenu.dataset.workspaceKind = kind;
     dom.workspaceActionMenu.dataset.workspaceId = id;
     dom.workspaceActionMenu.innerHTML = actions
-      .map((entry) => `<button class="ws-action-item" type="button" role="menuitem" data-ws-action="${entry.action}">${icon(entry.icon)}<span>${entry.label}</span></button>`)
+      .map((entry) => `<button class="ws-action-item${entry.action === "delete" ? " is-danger" : ""}" type="button" role="menuitem" data-ws-action="${entry.action}">${icon(entry.icon)}<span>${entry.label}</span></button>`)
       .join("");
     dom.workspaceActionMenu.hidden = false;
     workspaceActionTrigger = trigger;
@@ -423,5 +470,5 @@ export function createWorkspaces(context) {
   }
 
 
-  return { setupWorkspaceSwitcher, readWorkspaceLayout, saveWorkspaceLayout, defaultWorkspaceFolder, workspaceFolderTitle, workspaceDatasetLabel, workspaceStatsFor, workspaceMetricsHTML, workspaceGroupPassHTML, workspaceDatasetRow, renderDatasetOptions, closeWorkspaceActionMenu, openWorkspaceActionMenu, toggleWorkspaceFolder, startInlineRename, beginCreateFolder, updateWorkspaceLinks, loadWorkspaceManifest, refreshWorkspaceStats, fitWorkspaceMenu, openWorkspaceMenu, closeWorkspaceMenu, toggleWorkspaceMenu };
+  return { deleteWorkspace, restoreWorkspace, leaveDeletedWorkspace, setupWorkspaceSwitcher, readWorkspaceLayout, saveWorkspaceLayout, defaultWorkspaceFolder, workspaceFolderTitle, workspaceDatasetLabel, workspaceStatsFor, workspaceMetricsHTML, workspaceGroupPassHTML, workspaceDatasetRow, renderDatasetOptions, closeWorkspaceActionMenu, openWorkspaceActionMenu, toggleWorkspaceFolder, startInlineRename, beginCreateFolder, updateWorkspaceLinks, loadWorkspaceManifest, refreshWorkspaceStats, fitWorkspaceMenu, openWorkspaceMenu, closeWorkspaceMenu, toggleWorkspaceMenu };
 }
