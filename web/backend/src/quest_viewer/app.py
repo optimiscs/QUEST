@@ -1,7 +1,10 @@
 import logging
+import os
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -35,6 +38,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.sessions = sessions
     app.state.engine = engine
     app.include_router(router)
+    curation_root = Path(os.environ.get("GLASSEEK_ROOT", Path(__file__).resolve().parents[5] / "Glasseek"))
+    if (curation_root / "scripts/trajectory_review/api.py").is_file():
+        sys.path.insert(0, str(curation_root / "scripts"))
+        from trajectory_review.api import router as curation_router
+
+        app.include_router(curation_router)
 
     @app.middleware("http")
     async def request_logging(request: Request, call_next):
