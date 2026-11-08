@@ -6,7 +6,7 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select, text
 
 from quest_viewer.api.schemas import Manifest, RunInfo, TaskPage, TraceDocument, WorkspaceStatus
-from quest_viewer.api.tool_health import tool_events
+from quest_viewer.api.tool_health import TOOL_HEALTH_REVISION, annotate_tool_outcomes, tool_events
 from quest_viewer.api.vllm_metrics import scrape_all
 from quest_viewer.db.models import Report, Run, Trace, TracePayload
 
@@ -106,13 +106,17 @@ def trace_detail(request: Request, run_id: str, trace_id: str, response: Respons
         trace = session.get(Trace, (run_id, trace_id))
         if trace is None:
             raise HTTPException(404, "Trace not found")
-        if not_modified(request, trace.revision):
-            return Response(status_code=304, headers=cache_headers(trace.revision))
+        # Representation changes invalidate HTTP caches independently of the
+        # logical data revision used to join a summary with its detail.
+        revision = "trace-view-v1-" + TOOL_HEALTH_REVISION + "-" + trace.revision
+        headers = {**cache_headers(revision), "X-Trace-Revision": trace.revision}
+        if not_modified(request, revision):
+            return Response(status_code=304, headers=headers)
         body = session.scalar(
             select(TracePayload.body).where(TracePayload.run_id == run_id, TracePayload.trace_id == trace_id)
         )
-        response.headers.update(cache_headers(trace.revision))
-        return body
+        response.headers.update(headers)
+        return annotate_tool_outcomes(body)
 
 
 @router.get("/runs/{run_id}/traces/{trace_id}/session-stats")
@@ -145,7 +149,7 @@ def trace_tool_events(request: Request, run_id: str, trace_id: str, response: Re
         trace = session.get(Trace, (run_id, trace_id))
         if trace is None:
             raise HTTPException(404, "Trace not found")
-        revision = "tool-health-v1-" + trace.revision
+        revision = TOOL_HEALTH_REVISION + "-" + trace.revision
         if not_modified(request, revision):
             return Response(status_code=304, headers=cache_headers(revision))
         body = session.scalar(

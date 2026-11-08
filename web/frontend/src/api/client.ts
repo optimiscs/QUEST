@@ -9,13 +9,14 @@ export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-export async function getJSON<T>(url: string, signal?: AbortSignal, etag?: string): Promise<{data: T | null; etag: string | null}> {
+export async function getJSON<T>(url: string, signal?: AbortSignal, etag?: string): Promise<{data: T | null; etag: string | null; revision: string | null}> {
   const response = await fetch(url, {
     signal, headers: etag ? { 'If-None-Match': etag } : {}, cache: 'no-cache',
   });
-  if (response.status === 304) return { data: null, etag: response.headers.get('ETag') };
+  const revision = response.headers.get('X-Trace-Revision');
+  if (response.status === 304) return { data: null, etag: response.headers.get('ETag'), revision };
   if (!response.ok) throw new ApiError(response.status, `请求失败 (${response.status})`);
-  return { data: await response.json() as T, etag: response.headers.get('ETag') };
+  return { data: await response.json() as T, etag: response.headers.get('ETag'), revision };
 }
 
 export const runURL = (id: string) => `/api/v1/runs/${encodeURIComponent(id)}`;
@@ -40,6 +41,7 @@ export async function loadRun(id: string, signal?: AbortSignal) {
 
 export const loadTrace = (run: string, id: string, signal?: AbortSignal, revision?: string) =>
   getJSON<TraceDocument>(`${runURL(run)}/traces/${encodeURIComponent(id)}`, signal).then(result => {
-    if (revision && result.etag !== `"${revision}"`) throw new Error('轨迹正在更新，请重试');
+    const dataRevision = result.revision ?? result.etag?.replace(/^"|"$/g, '');
+    if (revision && dataRevision !== revision) throw new Error('轨迹正在更新，请重试');
     return result.data!;
   });

@@ -4,6 +4,30 @@ import json
 import math
 import re
 
+TOOL_HEALTH_REVISION = "tool-health-v2"
+
+
+def shell_result(step, raw):
+    """Recognize the recorded CLM shell trailer, not arbitrary webpage prose."""
+    if (step.get("tool") or {}).get("name") != "bash" or not isinstance(raw, str):
+        return raw, None
+    footer = re.search(
+        r"\n\n\(exit_code=(-?\d+)\)\n\[context: ~\d+/\d+ tokens[^\n]*\]"
+        r"(?:\n\[LIVE_CTX_MAIN\.txt:[\s\S]*)?\s*\Z",
+        raw,
+    )
+    if not footer:
+        return raw, None
+    return raw[: footer.start()], int(footer[1])
+
+
+def _decode_envelope(text):
+    obj, end = json.JSONDecoder().raw_decode(text)
+    tail = text[end:].strip()
+    if tail and not (tail.startswith("[Tool loop warning:") and tail.endswith("]")):
+        raise ValueError("Unrecognized text after tool envelope")
+    return obj
+
 
 def payload(raw):
     if isinstance(raw, dict):
@@ -16,11 +40,11 @@ def payload(raw):
         # The wrapper includes an instruction paragraph before the JSON body.
         for match in re.finditer(r"(?m)^\s*(?=[{\[])", raw):
             try:
-                return json.loads(raw[match.end() :].strip())
+                return _decode_envelope(raw[match.end() :].strip())
             except ValueError:
                 continue
     try:
-        return json.loads(raw)
+        return _decode_envelope(raw)
     except (ValueError, TypeError):
         return None
 
@@ -77,6 +101,7 @@ def classify(step, in_progress=False):
     raw = step.get("rawToolOutput")
     if raw is None:
         raw = tool.get("stdout", "")
+    raw, exit_code = shell_result(step, raw)
     obj = payload(raw)
     if isinstance(obj, dict) and obj.get("status") == "tool_budget_denied":
         return dict(status="excluded", reasons=[], error="工具预算耗尽，未执行", zeroResults=False)
@@ -99,11 +124,15 @@ def classify(step, in_progress=False):
         for query in tool.get("queries", []):
             if query.get("error"):
                 errors.append(str(query["error"]))
+    if exit_code not in (None, 0) and not errors:
+        errors.append(f"Shell exited {exit_code}: " + str(raw)[-1800:])
     if (
         not errors
         and isinstance(raw, str)
         and re.match(
-            r"^(Error\b|Tool '[^']+' does not exist|search_server failed|搜索失败[:：])", raw.strip(), re.I
+            r"^(Error\b|Tool error:|Tool '[^']+' does not exist|search_server failed|搜索失败[:：])",
+            raw.strip(),
+            re.I,
         )
     ):
         errors.append(raw.strip())
@@ -120,9 +149,14 @@ def classify(step, in_progress=False):
             partial=partial,
             zeroResults=False,
         )
-    if not raw:
-        return dict(status="pending" if in_progress else "unknown", reasons=[], error="", zeroResults=False)
-    success = False
+    if not raw and exit_code is None:
+        return dict(
+            status="pending" if in_progress else "unknown",
+            reasons=[],
+            error="" if in_progress else "会话已结束，但未记录该工具的返回，执行结果无法确认。",
+            zeroResults=False,
+        )
+    success = exit_code == 0
     results = None
     if isinstance(obj, dict):
         status = str(obj.get("status", "")).lower()
@@ -141,14 +175,31 @@ def classify(step, in_progress=False):
             results = children
         # A recognized search-result envelope is affirmative evidence, unlike
         # the viewer's old count=0 default. Explicit errors already won above.
-        if step.get("kind") == "search" and results is not None:
+        if (step.get("kind") == "search" or exit_code is not None) and results is not None:
             success = True
     return dict(
         status="success" if success else "unknown",
         reasons=[],
         error="",
-        zeroResults=bool(success and step.get("kind") == "search" and results == []),
+        zeroResults=bool(
+            success
+            and results == []
+            and (step.get("kind") == "search" or isinstance(obj, dict) and "organic" in obj)
+        ),
     )
+
+
+def annotate_tool_outcomes(body):
+    """Use the dashboard's classifier for trajectory colors as well."""
+    return {
+        **body,
+        "steps": [
+            {**step, "toolOutcome": classify(step, body.get("inProgress", False))}
+            if step.get("tool") or step.get("toolCallId")
+            else step
+            for step in body.get("steps", [])
+        ],
+    }
 
 
 def tool_events(body):
