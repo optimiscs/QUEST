@@ -88,10 +88,11 @@ test('desktop and mobile match the original visual baselines', async ({ page }, 
   for (const [name, viewport] of Object.entries({ desktop: { width: 1440, height: 1000 }, mobile: { width: 390, height: 844 } })) {
     await page.setViewportSize(viewport);
     await page.goto('/trace-viewer-zh/'); await loaded(page);
-    // Compare the original layout separately from the status bar and dashboard entries.
+    // Compare the original layout separately from status and feature navigation entries.
     await expect(page.locator('a[href="/vllm-dashboard.html"]')).toHaveCount(1);
     await expect(page.locator('a[href="/tool-dashboard.html"]')).toHaveCount(1);
-    await page.addStyleTag({ content: '.session-status, a[href="/vllm-dashboard.html"], a[href="/tool-dashboard.html"] { display: none !important; }' });
+    await expect(page.locator('a[href="/curation.html"]')).toHaveCount(1);
+    await page.addStyleTag({ content: '.session-status, a[href="/curation.html"], a[href="/vllm-dashboard.html"], a[href="/tool-dashboard.html"] { display: none !important; }' });
     for (const mode of ['trajectory', 'overview']) {
       if (mode === 'overview') await page.locator('#tabOverview').click();
       const baseline = new URL(`../visual/${name}-${mode}.png`, import.meta.url);
