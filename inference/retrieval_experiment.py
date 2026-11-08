@@ -131,11 +131,17 @@ def select(text, goal, method, *, embedding_url=None, reranker_url=None):
     if method not in {'bm25', 'embedding', 'bm25_embedding', 'bm25_reranker', 'hybrid', 'hybrid_reranker'}:
         raise ValueError('unknown retrieval method')
     started = time.monotonic()
+    deadline = started + float(os.getenv('VISIT_RETRIEVAL_HTTP_TIMEOUT', '7200'))
+    def request_timeout():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('Retrieval deadline exceeded')
+        return (min(5, remaining), remaining)
     pool_url = os.getenv('VISIT_BM25_POOL_URL', '').strip()
     if pool_url:
         response = requests.post(pool_url.rstrip('/') + '/prepare',
                                  json={'text': text, 'goal': goal, 'need_bm25': method != 'embedding'},
-                                 timeout=(5, 7200))
+                                 timeout=request_timeout())
         response.raise_for_status()
         prepared = response.json()
         original_tokens = prepared['input_tokens']
@@ -167,7 +173,7 @@ def select(text, goal, method, *, embedding_url=None, reranker_url=None):
         # The shared 8B services serialize GPU inference. A long page may
         # require minutes, and a request can also wait behind other agents;
         # a five-minute timeout turns ordinary queueing into lost evidence.
-        response = requests.post(url.rstrip('/') + '/score', json={'goal': goal, 'passages': [chunks[i].text for i in indices]}, timeout=(10, 7200))
+        response = requests.post(url.rstrip('/') + '/score', json={'goal': goal, 'passages': [chunks[i].text for i in indices]}, timeout=request_timeout())
         response.raise_for_status()
         result = response.json()
         values = result['scores']
